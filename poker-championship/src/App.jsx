@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, addDoc, updateDoc, deleteDoc } from 'firebase/firestore';
-import { Trophy, CalendarDays, Plus, Check, X, HandCoins, ArrowRightLeft, AlertCircle, Settings, Trash2 } from 'lucide-react';
+import { Trophy, CalendarDays, Plus, Check, X, HandCoins, ArrowRightLeft, AlertCircle, Settings, Trash2, Wallet, Banknote, Crown, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Clock } from 'lucide-react';
 
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
   apiKey: "AIzaSyDNHughes_fwlOts8OUaXbVb1nQN9VUfcU",
@@ -42,7 +42,6 @@ const DEFAULT_CONFIG = {
   ]
 };
 
-// Helper: true repayment obligation including interest
 function repaymentAmount(loan) {
   return Math.round(Number(loan.amount) * (1 + Number(loan.interest || 0) / 100));
 }
@@ -54,17 +53,14 @@ export default function App() {
   const [loans, setLoans]         = useState([]);
   const [loading, setLoading]     = useState(true);
 
-  // Configuration State
   const [config, setConfig]               = useState(DEFAULT_CONFIG);
   const [settingsDraft, setSettingsDraft] = useState(DEFAULT_CONFIG);
 
-  // Derive current day from the highest recorded day number
   const currentDay = useMemo(() => {
     if (sessions.length === 0) return 0;
     return Math.max(...sessions.map(s => Number(s.dayNumber)));
   }, [sessions]);
 
-  // Form states
   const [showSessionModal, setShowSessionModal] = useState(false);
   const [sessionDay, setSessionDay]             = useState(1);
   const [sessionDraft, setSessionDraft]         = useState({});
@@ -110,7 +106,7 @@ export default function App() {
 
     const unsubSessions = onSnapshot(sessionsRef, snap => {
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      data.sort((a, b) => Number(b.dayNumber) - Number(a.dayNumber)); // desc
+      data.sort((a, b) => Number(b.dayNumber) - Number(a.dayNumber));
       setSessions(data);
       setLoading(false);
     }, err => console.error('Session fetch error:', err));
@@ -185,23 +181,17 @@ export default function App() {
     }).sort((a, b) => b.netWorth - a.netWorth);
   }, [sessions, loans, currentDay, config]);
 
-  // ── Derived UI values ─────────────────────────────────────────────────────────
   const actualSystemNetWorth = playerStats.reduce((sum, p) => sum + p.netWorth, 0);
   const salaryPerPlayer = playerStats[0]?.salary || 0;
   const totalPaydays    = Math.floor(currentDay / config.paydayInterval);
   const nextPaydayIn    = config.paydayInterval - (currentDay % config.paydayInterval);
 
-  // ── Settings Actions ──────────────────────────────────────────────────────────
-  const handleConfigChange = (field, value) => {
-    setSettingsDraft(prev => ({ ...prev, [field]: Number(value) }));
-  };
-
+  // ── Handlers ──────────────────────────────────────────────────────────────────
+  const handleConfigChange = (field, value) => setSettingsDraft(prev => ({ ...prev, [field]: Number(value) }));
+  
   const handlePlayerChange = (index, field, value) => {
     const newPlayers = [...settingsDraft.players];
-    newPlayers[index] = { 
-      ...newPlayers[index], 
-      [field]: field === 'startBalance' ? Number(value) : value 
-    };
+    newPlayers[index] = { ...newPlayers[index], [field]: field === 'startBalance' ? Number(value) : value };
     setSettingsDraft(prev => ({ ...prev, players: newPlayers }));
   };
 
@@ -214,7 +204,7 @@ export default function App() {
   };
 
   const removePlayer = (index) => {
-    if (window.confirm("Warning: Removing a player might cause errors if they have existing records in sessions or loans. Proceed?")) {
+    if (window.confirm("Warning: Removing a player might cause errors. Proceed?")) {
       const newPlayers = settingsDraft.players.filter((_, i) => i !== index);
       setSettingsDraft(prev => ({ ...prev, players: newPlayers }));
     }
@@ -222,17 +212,13 @@ export default function App() {
 
   const saveSettings = async () => {
     if (!user) return;
-    try {
-      await setDoc(doc(db, 'artifacts', appId, 'public', 'config'), settingsDraft);
-      alert("Settings saved successfully!");
-    } catch (err) { console.error("Error saving config:", err); }
+    try { await setDoc(doc(db, 'artifacts', appId, 'public', 'config'), settingsDraft); } 
+    catch (err) { console.error("Error saving config:", err); }
   };
 
-  // ── Session actions ───────────────────────────────────────────────────────────
   const openSessionModal = () => {
     const latestSession = sessions.length > 0 ? sessions[0] : null;
     const nextDay = currentDay + 1;
-    
     const currentState = getSystemStateAtDay(currentDay);
     const nextState = getSystemStateAtDay(nextDay);
     const salaryBump = nextState.totalSalaryPerPlayer - currentState.totalSalaryPerPlayer;
@@ -267,17 +253,12 @@ export default function App() {
 
   const deleteSession = async (id) => {
     if (!user) return;
-    try {
-      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sessions', id));
-    } catch (err) { console.error('Error deleting session:', err); }
+    try { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sessions', id)); } 
+    catch (err) { console.error('Error deleting session:', err); }
   };
 
-  // ── Loan actions ──────────────────────────────────────────────────────────────
   const openLoanModal = () => {
-    setLoanDraft({
-      borrower: '', lender: '', amount: 0, interest: 10,
-      dayIssued: currentDay, deadlineDay: currentDay + 5,
-    });
+    setLoanDraft({ borrower: '', lender: '', amount: 0, interest: 10, dayIssued: currentDay, deadlineDay: currentDay + 5 });
     setShowLoanModal(true);
   };
 
@@ -285,10 +266,7 @@ export default function App() {
     if (!user || !loanDraft.borrower || !loanDraft.lender || loanDraft.amount <= 0) return;
     try {
       await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'loans'), {
-        ...loanDraft,
-        status:      'active',
-        recordedAt:  new Date().toISOString(),
-        recordedBy:  user.uid,
+        ...loanDraft, status: 'active', recordedAt: new Date().toISOString(), recordedBy: user.uid,
       });
       setShowLoanModal(false);
     } catch (err) { console.error('Error saving loan:', err); }
@@ -301,14 +279,13 @@ export default function App() {
       const repayAmount = repaymentAmount(loan);
 
       await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'loans', loan.id), {
-        status:     isSettling ? 'settled' : 'active',
+        status: isSettling ? 'settled' : 'active',
         settledDay: isSettling ? currentDay : null,
       });
 
       if (sessions.length > 0) {
         const latestSession = sessions[0];
         const newBalances = { ...latestSession.balances };
-
         const borrowerBal = newBalances[loan.borrower] ?? Number(config.players.find(p=>p.id===loan.borrower)?.startBalance || 0);
         const lenderBal   = newBalances[loan.lender] ?? Number(config.players.find(p=>p.id===loan.lender)?.startBalance || 0);
 
@@ -320,60 +297,59 @@ export default function App() {
           newBalances[loan.lender]   = lenderBal - repayAmount;
         }
 
-        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sessions', latestSession.id), {
-          balances: newBalances
-        });
+        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sessions', latestSession.id), { balances: newBalances });
       }
     } catch (err) { console.error('Error updating loan:', err); }
   };
 
   const getPlayerName = id => config.players.find(p => p.id === id)?.name || id;
 
-  // ── Loading ───────────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-slate-950 text-slate-200">
+      <div className="flex h-screen items-center justify-center bg-[#09090b] text-zinc-200">
         <div className="animate-pulse flex flex-col items-center">
-          <Trophy className="h-12 w-12 text-emerald-500 mb-4" />
-          <h2 className="text-xl font-bold">Loading Championship...</h2>
+          <Crown className="h-12 w-12 text-amber-500 mb-4" />
+          <h2 className="text-xl font-bold tracking-tight">Loading League...</h2>
         </div>
       </div>
     );
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────────
+  const navItems = [
+    { id: 'dashboard', icon: Trophy,       label: 'Leaderboard' },
+    { id: 'sessions',  icon: CalendarDays, label: 'Sessions' },
+    { id: 'loans',     icon: HandCoins,    label: 'Loans' },
+    { id: 'settings',  icon: Settings,     label: 'Settings' },
+  ];
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 font-sans">
-      {/* ── Header ── */}
-      <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-4 py-4 sm:flex sm:items-center sm:justify-between">
+    <div className="min-h-screen bg-[#09090b] text-zinc-300 font-sans selection:bg-amber-500/30 pb-24 md:pb-8">
+      
+      {/* ── Top Header ── */}
+      <header className="sticky top-0 z-30 bg-[#09090b]/80 backdrop-blur-xl border-b border-white/5">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="bg-emerald-500/20 p-2 rounded-lg">
-              <Trophy className="h-6 w-6 text-emerald-400" />
+            <div className="bg-gradient-to-br from-amber-400 to-orange-600 p-2 rounded-xl shadow-[0_0_15px_rgba(245,158,11,0.2)]">
+              <Crown className="h-5 w-5 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-white">Poker Championship Tracker</h1>
-              <p className="text-xs text-slate-400">
-                {config.players.length} Players • Current Day:{' '}
-                <span className="text-emerald-400 font-bold">{currentDay}</span>
+              <h1 className="text-lg font-bold text-white tracking-tight leading-none">Championship</h1>
+              <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold mt-1">
+                Day {currentDay} • {config.players.length} Players
               </p>
             </div>
           </div>
 
-          <nav className="flex space-x-1 mt-4 sm:mt-0 bg-slate-800 p-1 rounded-lg overflow-x-auto">
-            {[
-              { id: 'dashboard', icon: Trophy,       label: 'Leaderboard'   },
-              { id: 'sessions',  icon: CalendarDays, label: 'Daily Results' },
-              { id: 'loans',     icon: HandCoins,    label: 'Loans'         },
-              { id: 'settings',  icon: Settings,     label: 'Settings'      },
-            ].map(tab => (
+          {/* Desktop Nav */}
+          <nav className="hidden md:flex items-center bg-white/5 p-1 rounded-xl border border-white/5">
+            {navItems.map(tab => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
                   activeTab === tab.id
-                    ? 'bg-emerald-500 text-slate-950 shadow-sm'
-                    : 'text-slate-400 hover:text-white hover:bg-slate-700'
+                    ? 'bg-zinc-800 text-amber-400 shadow-sm'
+                    : 'text-zinc-400 hover:text-zinc-100 hover:bg-white/5'
                 }`}
               >
                 <tab.icon className="h-4 w-4" />
@@ -384,139 +360,147 @@ export default function App() {
         </div>
       </header>
 
-      {/* ── Main ── */}
-      <main className="max-w-6xl mx-auto px-4 py-8">
+      {/* ── Main Content ── */}
+      <main className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-8">
 
         {/* ════════ DASHBOARD ════════ */}
         {activeTab === 'dashboard' && (
-          <div className="space-y-6">
-            <div className="flex flex-col md:flex-row md:justify-between md:items-end gap-4">
-              <div>
-                <h2 className="text-2xl font-bold text-white">Current Standings</h2>
-                <p className="text-sm text-slate-400">
-                  Net Worth = table chips + (loans owed to you incl. interest) − (loans you owe incl. interest).
-                </p>
+          <div className="space-y-8 animate-in fade-in duration-500">
+            
+            {/* Metric Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-5 flex flex-col justify-between">
+                <div className="flex items-center gap-2 text-zinc-400 mb-2">
+                  <Wallet className="w-4 h-4 text-emerald-400" />
+                  <span className="text-xs font-semibold uppercase tracking-wider">System Net Worth</span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl font-bold text-white tabular-nums">{actualSystemNetWorth.toLocaleString()}</span>
+                  <span className="text-xs text-zinc-500">/ {config.maxSystemNW.toLocaleString()}</span>
+                </div>
               </div>
-              <div className="flex flex-wrap gap-2 text-xs">
-                <div className="bg-slate-800/80 border border-slate-700 px-3 py-1.5 rounded-md flex flex-col">
-                  <span className="text-slate-400 uppercase tracking-wider text-[10px] font-semibold">System Net Worth</span>
-                  <span className="font-mono text-emerald-400 font-medium">
-                    {actualSystemNetWorth.toLocaleString()}{' '}
-                    <span className="text-slate-500">/ {config.maxSystemNW.toLocaleString()}</span>
-                  </span>
+
+              <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-5 flex flex-col justify-between">
+                <div className="flex items-center gap-2 text-zinc-400 mb-2">
+                  <Banknote className="w-4 h-4 text-blue-400" />
+                  <span className="text-xs font-semibold uppercase tracking-wider">Salary Ledger</span>
                 </div>
-                <div className="bg-slate-800/80 border border-slate-700 px-3 py-1.5 rounded-md flex flex-col">
-                  <span className="text-slate-400 uppercase tracking-wider text-[10px] font-semibold">Salary Ledger</span>
-                  <span className="font-mono text-blue-400 font-medium">
-                    +{salaryPerPlayer.toLocaleString()}{' '}
-                    <span className="text-slate-500">({totalPaydays} paydays)</span>
-                  </span>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl font-bold text-white tabular-nums">+{salaryPerPlayer.toLocaleString()}</span>
+                  <span className="text-xs text-zinc-500">({totalPaydays} payouts)</span>
                 </div>
-                <div className="bg-slate-800/80 border border-slate-700 px-3 py-1.5 rounded-md flex flex-col">
-                  <span className="text-slate-400 uppercase tracking-wider text-[10px] font-semibold">Next Payday</span>
-                  <span className="font-mono text-purple-400 font-medium">
-                    {actualSystemNetWorth >= config.maxSystemNW
-                      ? 'Maxed Out'
-                      : `In ${nextPaydayIn} Day${nextPaydayIn !== 1 ? 's' : ''}`}
+              </div>
+
+              <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-5 flex flex-col justify-between">
+                <div className="flex items-center gap-2 text-zinc-400 mb-2">
+                  <Clock className="w-4 h-4 text-purple-400" />
+                  <span className="text-xs font-semibold uppercase tracking-wider">Next Payday</span>
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl font-bold text-white">
+                    {actualSystemNetWorth >= config.maxSystemNW ? 'Maxed Out' : `Day ${currentDay + nextPaydayIn}`}
                   </span>
+                  {actualSystemNetWorth < config.maxSystemNW && (
+                    <span className="text-xs text-zinc-500">(in {nextPaydayIn} days)</span>
+                  )}
                 </div>
               </div>
             </div>
 
-            <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900 shadow-xl">
-              <table className="w-full text-left text-sm whitespace-nowrap">
-                <thead className="bg-slate-950/50 text-slate-400 border-b border-slate-800">
-                  <tr>
-                    <th className="px-6 py-4 font-semibold">Rank</th>
-                    <th className="px-6 py-4 font-semibold">Player</th>
-                    <th className="px-6 py-4 font-semibold text-right">Table Chips</th>
-                    <th className="px-6 py-4 font-semibold text-right">True Poker P/L</th>
-                    <th className="px-6 py-4 font-semibold text-right text-blue-400">Salary</th>
-                    <th className="px-6 py-4 font-semibold text-right">Active Loans</th>
-                    <th className="px-6 py-4 font-semibold text-right">Total Net Worth</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/50">
-                  {playerStats.map((stat, index) => (
-                    <tr key={stat.id} className="hover:bg-slate-800/50 transition-colors">
-                      <td className="px-6 py-4">
-                        <div className={`flex items-center justify-center w-8 h-8 rounded-full font-bold ${
-                          index === 0 ? 'bg-yellow-500/20 text-yellow-400' :
-                          index === 1 ? 'bg-slate-400/20 text-slate-300' :
-                          index === 2 ? 'bg-amber-700/20 text-amber-500' : 'text-slate-500'
-                        }`}>
-                          {index + 1}
+            {/* Leaderboard List */}
+            <div>
+              <div className="flex items-center justify-between mb-4 px-1">
+                <h2 className="text-lg font-semibold text-white">Leaderboard</h2>
+                <span className="text-xs text-zinc-500 uppercase tracking-widest font-semibold">Net Worth</span>
+              </div>
+              
+              <div className="space-y-3">
+                {playerStats.map((stat, index) => {
+                  const isTop3 = index < 3;
+                  const rankColors = [
+                    'bg-amber-400 text-amber-950 shadow-[0_0_15px_rgba(245,158,11,0.2)] border-amber-400/50',
+                    'bg-zinc-300 text-zinc-900 shadow-[0_0_15px_rgba(212,212,216,0.1)] border-zinc-300/50',
+                    'bg-orange-700 text-orange-100 shadow-[0_0_15px_rgba(194,65,12,0.2)] border-orange-700/50'
+                  ];
+                  const badgeClass = isTop3 ? rankColors[index] : 'bg-zinc-800 text-zinc-400 border-white/5';
+                  const rowClass = index === 0 
+                    ? 'bg-gradient-to-r from-amber-500/10 to-zinc-900/40 border-amber-500/20' 
+                    : 'bg-zinc-900/40 border-white/5 hover:bg-zinc-800/40';
+
+                  return (
+                    <div key={stat.id} className={`group relative border rounded-2xl p-4 transition-all duration-300 ${rowClass}`}>
+                      <div className="flex items-center justify-between">
+                        
+                        <div className="flex items-center gap-4">
+                          <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm border ${badgeClass}`}>
+                            {index + 1}
+                          </div>
+                          <div>
+                            <h3 className={`text-base font-semibold ${index === 0 ? 'text-amber-400' : 'text-zinc-100'}`}>
+                              {stat.name}
+                            </h3>
+                            <div className="flex items-center gap-3 text-xs text-zinc-500 mt-0.5 font-medium">
+                              <span className="flex items-center gap-1" title="Table Balance">
+                                <Wallet className="w-3 h-3"/> {stat.currentTableBalance.toLocaleString()}
+                              </span>
+                              {(stat.lentOut > 0 || stat.borrowed > 0) && (
+                                <span className="flex items-center gap-1" title="Net Loans">
+                                  <HandCoins className="w-3 h-3"/> 
+                                  <span className={stat.lentOut > stat.borrowed ? 'text-emerald-500/80' : 'text-rose-500/80'}>
+                                    {stat.lentOut > stat.borrowed ? '+' : ''}{(stat.lentOut - stat.borrowed).toLocaleString()}
+                                  </span>
+                                </span>
+                              )}
+                            </div>
+                          </div>
                         </div>
-                      </td>
-                      <td className="px-6 py-4 font-medium text-slate-200">{stat.name}</td>
-                      <td className="px-6 py-4 text-right text-slate-400">
-                        {stat.currentTableBalance.toLocaleString()}
-                      </td>
-                      <td className={`px-6 py-4 text-right font-medium ${
-                        stat.tablePL > 0 ? 'text-emerald-400' :
-                        stat.tablePL < 0 ? 'text-red-400' : 'text-slate-500'
-                      }`}>
-                        {stat.tablePL > 0 ? '+' : ''}{stat.tablePL.toLocaleString()}
-                      </td>
-                      <td className="px-6 py-4 text-right text-blue-400 font-mono">
-                        +{stat.salary.toLocaleString()}
-                      </td>
-                      <td className="px-6 py-4 text-right">
-                        {stat.borrowed > 0 && (
-                          <span className="text-red-400 text-xs block">
-                            Owes: {stat.borrowed.toLocaleString()}
-                          </span>
-                        )}
-                        {stat.lentOut > 0 && (
-                          <span className="text-emerald-400 text-xs block">
-                            Owed: {stat.lentOut.toLocaleString()}
-                          </span>
-                        )}
-                        {stat.borrowed === 0 && stat.lentOut === 0 && (
-                          <span className="text-slate-600">−</span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 text-right font-bold text-lg text-white">
-                        {stat.netWorth.toLocaleString()}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+
+                        <div className="text-right flex flex-col items-end">
+                          <div className="text-xl sm:text-2xl font-bold text-white tabular-nums tracking-tight">
+                            {stat.netWorth.toLocaleString()}
+                          </div>
+                          <div className={`flex items-center gap-0.5 text-[11px] font-semibold tracking-wide uppercase mt-0.5 ${stat.tablePL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {stat.tablePL >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                            {Math.abs(stat.tablePL).toLocaleString()} P/L
+                          </div>
+                        </div>
+
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         )}
 
         {/* ════════ SESSIONS ════════ */}
         {activeTab === 'sessions' && (
-          <div className="space-y-6">
-            <div className="flex justify-between items-center">
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <div className="flex justify-between items-end gap-4">
               <div>
-                <h2 className="text-2xl font-bold text-white">Daily Ledger</h2>
-                <p className="text-sm text-slate-400">Physical table chip movements day by day.</p>
+                <h2 className="text-xl font-bold text-white">Daily Ledger</h2>
+                <p className="text-sm text-zinc-500">Record physical table chips.</p>
               </div>
               <button
                 onClick={openSessionModal}
-                className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-semibold py-2 px-4 rounded-lg transition-colors"
+                className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-bold py-2.5 px-5 rounded-xl transition-all shadow-[0_0_20px_rgba(16,185,129,0.2)]"
               >
                 <Plus className="h-5 w-5" />
-                Record Day
+                <span className="hidden sm:inline">Record Day</span>
               </button>
             </div>
 
             {sessions.length === 0 ? (
-              <div className="text-center py-16 bg-slate-900 border border-slate-800 rounded-xl">
-                <CalendarDays className="h-12 w-12 text-slate-600 mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-slate-300">No days recorded</h3>
-                <p className="text-slate-500">Record Day 1 to get started.</p>
+              <div className="text-center py-20 bg-zinc-900/30 border border-white/5 rounded-3xl border-dashed">
+                <CalendarDays className="h-12 w-12 text-zinc-700 mx-auto mb-4" />
+                <h3 className="text-lg font-medium text-zinc-300">No days recorded</h3>
+                <p className="text-zinc-500 text-sm mt-1">Start tracking by recording Day 1.</p>
               </div>
             ) : (
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {sessions.map(session => {
-                  const prevSession = sessions.find(
-                    s => Number(s.dayNumber) < Number(session.dayNumber)
-                  );
-
+                  const prevSession = sessions.find(s => Number(s.dayNumber) < Number(session.dayNumber));
                   const currentDayState = getSystemStateAtDay(Number(session.dayNumber));
                   const prevDayState = getSystemStateAtDay(prevSession ? Number(prevSession.dayNumber) : 0);
                   const salaryBump = currentDayState.totalSalaryPerPlayer - prevDayState.totalSalaryPerPlayer;
@@ -525,7 +509,6 @@ export default function App() {
                   config.players.forEach(p => {
                     const currentBal = session.balances?.[p.id] ?? Number(p.startBalance);
                     const prevBal    = prevSession?.balances?.[p.id] ?? Number(p.startBalance);
-                    
                     const truePokerDiff = currentBal - prevBal - salaryBump; 
                     if (truePokerDiff !== 0) dailyPL[p.name] = truePokerDiff;
                   });
@@ -534,49 +517,42 @@ export default function App() {
                   const isPayday = Number(session.dayNumber) > 0 && Number(session.dayNumber) % config.paydayInterval === 0;
 
                   return (
-                    <div
-                      key={session.id}
-                      className="bg-slate-900 border border-slate-800 p-5 rounded-xl flex flex-col shadow-lg relative overflow-hidden"
-                    >
+                    <div key={session.id} className="bg-zinc-900/40 border border-white/5 p-5 rounded-2xl flex flex-col relative overflow-hidden group">
                       {isPayday && (
-                        <div className="absolute top-0 left-0 w-full bg-blue-500/20 border-b border-blue-500/30 text-blue-400 text-[10px] font-bold uppercase text-center py-1 tracking-wider">
-                          💰 Payday: +{config.salaryAmount.toLocaleString()} Salary Added To Chips
+                        <div className="absolute top-0 left-0 w-full bg-blue-500/10 border-b border-blue-500/20 text-blue-400 text-[9px] font-bold uppercase text-center py-1 tracking-widest">
+                          Payday Distributed (+{config.salaryAmount.toLocaleString()})
                         </div>
                       )}
 
-                      <div className={`flex justify-between items-start mb-4 border-b border-slate-800 pb-3 ${isPayday ? 'mt-4' : ''}`}>
+                      <div className={`flex justify-between items-start mb-4 border-b border-white/5 pb-4 ${isPayday ? 'mt-4' : ''}`}>
                         <div>
-                          <span className="text-xs font-semibold text-emerald-500 uppercase tracking-wider block mb-1">Session</span>
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="text-[10px] font-bold bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded uppercase tracking-wider">Session</span>
+                          </div>
                           <h3 className="text-xl font-bold text-white">Day {session.dayNumber}</h3>
-                          {prevSession && (
-                            <p className="text-[10px] text-slate-500 mt-0.5">
-                              vs Day {prevSession.dayNumber}
-                            </p>
-                          )}
                         </div>
                         <button
-                          onClick={() => {
-                            if (window.confirm(`Delete Day ${session.dayNumber}?`)) deleteSession(session.id);
-                          }}
-                          className="text-slate-500 hover:text-red-400 transition-colors p-1"
-                          title="Delete Session"
+                          onClick={() => { if (window.confirm(`Delete Day ${session.dayNumber}?`)) deleteSession(session.id); }}
+                          className="text-zinc-600 hover:text-rose-400 transition-colors bg-zinc-900 hover:bg-rose-500/10 p-2 rounded-lg"
                         >
-                          <X className="h-4 w-4" />
+                          <Trash2 className="h-4 w-4" />
                         </button>
                       </div>
 
-                      <div className="flex-1 overflow-y-auto max-h-[200px] pr-2 space-y-2">
-                        {activePlayers.length === 0 && (
-                          <p className="text-sm text-slate-500 italic">No poker P/L changed this day.</p>
+                      <div className="flex-1 overflow-y-auto pr-1 space-y-2.5">
+                        {activePlayers.length === 0 ? (
+                          <p className="text-sm text-zinc-600 italic">No movement recorded.</p>
+                        ) : (
+                          activePlayers.map(([name, val]) => (
+                            <div key={name} className="flex justify-between items-center text-sm">
+                              <span className="text-zinc-400 font-medium">{name}</span>
+                              <span className={`font-mono font-medium flex items-center gap-1 ${val > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                {val > 0 ? <ArrowUpRight className="w-3 h-3"/> : <ArrowDownRight className="w-3 h-3"/>}
+                                {Math.abs(val).toLocaleString()}
+                              </span>
+                            </div>
+                          ))
                         )}
-                        {activePlayers.map(([name, val]) => (
-                          <div key={name} className="flex justify-between items-center text-sm">
-                            <span className="text-slate-300">{name}</span>
-                            <span className={`font-mono font-medium ${val > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                              {val > 0 ? '+' : ''}{val.toLocaleString()}
-                            </span>
-                          </div>
-                        ))}
                       </div>
                     </div>
                   );
@@ -588,205 +564,147 @@ export default function App() {
 
         {/* ════════ LOANS ════════ */}
         {activeTab === 'loans' && (
-          <div className="space-y-6">
-            <div className="flex justify-between items-center">
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <div className="flex justify-between items-end gap-4">
               <div>
-                <h2 className="text-2xl font-bold text-white">Loan Ledger</h2>
-                <p className="text-sm text-slate-400">
-                  Active loan amounts affect Net Worth at full repayment value (principal + interest).
-                </p>
+                <h2 className="text-xl font-bold text-white">Loan Ledger</h2>
+                <p className="text-sm text-zinc-500">Track player-to-player debts.</p>
               </div>
               <button
                 onClick={openLoanModal}
-                className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-semibold py-2 px-4 rounded-lg transition-colors"
+                className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold py-2.5 px-5 rounded-xl transition-all shadow-[0_0_20px_rgba(245,158,11,0.2)]"
               >
                 <Plus className="h-5 w-5" />
-                Record Loan
+                <span className="hidden sm:inline">New Loan</span>
               </button>
             </div>
 
-            <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
-              <table className="w-full text-left text-sm whitespace-nowrap">
-                <thead className="bg-slate-950/50 text-slate-400 border-b border-slate-800">
-                  <tr>
-                    <th className="px-6 py-4 font-semibold">Day Issued</th>
-                    <th className="px-6 py-4 font-semibold">Deadline</th>
-                    <th className="px-6 py-4 font-semibold">Details</th>
-                    <th className="px-6 py-4 font-semibold">Amount / Repayment</th>
-                    <th className="px-6 py-4 font-semibold">Status</th>
-                    <th className="px-6 py-4 font-semibold text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/50">
-                  {loans.length === 0 && (
-                    <tr>
-                      <td colSpan="6" className="px-6 py-8 text-center text-slate-500 italic">
-                        No loans recorded yet.
-                      </td>
-                    </tr>
-                  )}
-                  {loans.map(loan => {
-                    const isOverdue = currentDay > Number(loan.deadlineDay) && loan.status === 'active';
-                    const repay     = repaymentAmount(loan);
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {loans.length === 0 && (
+                 <div className="col-span-full text-center py-20 bg-zinc-900/30 border border-white/5 rounded-3xl border-dashed">
+                  <HandCoins className="h-12 w-12 text-zinc-700 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-zinc-300">No active loans</h3>
+                  <p className="text-zinc-500 text-sm mt-1">Player debts will appear here.</p>
+                </div>
+              )}
+              {loans.map(loan => {
+                const isOverdue = currentDay > Number(loan.deadlineDay) && loan.status === 'active';
+                const repay = repaymentAmount(loan);
 
-                    return (
-                      <tr
-                        key={loan.id}
-                        className={`hover:bg-slate-800/50 transition-colors ${loan.status === 'settled' ? 'opacity-50' : ''}`}
+                return (
+                  <div key={loan.id} className={`bg-zinc-900/40 border p-5 rounded-2xl flex flex-col relative transition-all ${loan.status === 'settled' ? 'opacity-60 border-white/5' : isOverdue ? 'border-rose-500/30' : 'border-white/10'}`}>
+                    
+                    <div className="flex justify-between items-start mb-4">
+                      <div className={`text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wider ${loan.status === 'active' ? 'bg-amber-500/10 text-amber-500' : 'bg-zinc-800 text-zinc-400'}`}>
+                        {loan.status === 'active' ? 'Active' : 'Settled'}
+                      </div>
+                      <button
+                        onClick={() => toggleLoanStatus(loan)}
+                        className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
+                          loan.status === 'active'
+                            ? 'bg-zinc-800 hover:bg-emerald-500/20 text-zinc-300 hover:text-emerald-400'
+                            : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'
+                        }`}
                       >
-                        <td className="px-6 py-4 text-slate-400 font-medium">Day {loan.dayIssued}</td>
-                        <td className={`px-6 py-4 font-medium ${isOverdue ? 'text-red-400' : 'text-slate-400'}`}>
-                          Day {loan.deadlineDay}
-                          {isOverdue && (
-                            <span className="flex items-center gap-1 text-[10px] uppercase font-bold text-red-400 mt-1">
-                              <AlertCircle className="w-3 h-3" /> Overdue
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <span className="font-medium text-red-400">{getPlayerName(loan.borrower)}</span>
-                            <ArrowRightLeft className="h-4 w-4 text-slate-600" />
-                            <span className="font-medium text-emerald-400">{getPlayerName(loan.lender)}</span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="font-bold text-white">{Number(loan.amount).toLocaleString()}</div>
-                          <div className="text-xs text-slate-500">
-                            @ {loan.interest}% → repay{' '}
-                            <span className="text-amber-400 font-semibold">{repay.toLocaleString()}</span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                            loan.status === 'active'
-                              ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                              : 'bg-slate-800 text-slate-400 border border-slate-700'
-                          }`}>
-                            {loan.status === 'active' ? 'Active' : 'Settled'}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <button
-                            onClick={() => toggleLoanStatus(loan)}
-                            className={`text-xs font-medium px-3 py-1.5 rounded-md transition-colors ${
-                              loan.status === 'active'
-                                ? 'bg-slate-800 hover:bg-emerald-500/20 text-slate-300 hover:text-emerald-400 border border-slate-700'
-                                : 'bg-slate-800/50 text-slate-500 hover:text-slate-300'
-                            }`}
-                          >
-                            {loan.status === 'active' ? 'Mark Settled' : 'Re-open'}
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                        {loan.status === 'active' ? 'Settle' : 'Re-open'}
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between bg-zinc-950/50 p-3 rounded-xl mb-4 border border-white/5">
+                      <div className="text-center flex-1">
+                        <div className="text-xs text-zinc-500 uppercase font-semibold mb-1">Borrower</div>
+                        <div className="font-bold text-rose-400">{getPlayerName(loan.borrower)}</div>
+                      </div>
+                      <ArrowRightLeft className="w-4 h-4 text-zinc-600 mx-2" />
+                      <div className="text-center flex-1">
+                        <div className="text-xs text-zinc-500 uppercase font-semibold mb-1">Lender</div>
+                        <div className="font-bold text-emerald-400">{getPlayerName(loan.lender)}</div>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-between items-end mt-auto pt-2">
+                      <div>
+                        <div className="text-xs text-zinc-500 font-medium mb-1">Repayment ({loan.interest}%)</div>
+                        <div className="text-xl font-bold text-white tabular-nums">{repay.toLocaleString()}</div>
+                      </div>
+                      <div className={`text-xs font-medium text-right ${isOverdue ? 'text-rose-400' : 'text-zinc-400'}`}>
+                        Due Day {loan.deadlineDay}
+                        {isOverdue && <div className="flex items-center justify-end gap-1 font-bold mt-1 uppercase text-[10px]"><AlertCircle className="w-3 h-3"/> Overdue</div>}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
 
         {/* ════════ SETTINGS ════════ */}
         {activeTab === 'settings' && (
-          <div className="space-y-6">
-            <div className="flex justify-between items-center">
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <div className="flex justify-between items-end gap-4">
               <div>
-                <h2 className="text-2xl font-bold text-white">Championship Configuration</h2>
-                <p className="text-sm text-slate-400">Settings sync universally to all players in real-time.</p>
+                <h2 className="text-xl font-bold text-white">Settings</h2>
+                <p className="text-sm text-zinc-500">Configure rules & players.</p>
               </div>
               <button
                 onClick={saveSettings}
-                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2 px-4 rounded-lg transition-colors shadow-lg"
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2.5 px-5 rounded-xl transition-all shadow-[0_0_20px_rgba(37,99,235,0.2)]"
               >
                 <Check className="h-5 w-5" />
-                Save Settings
+                <span className="hidden sm:inline">Save</span>
               </button>
             </div>
 
-            <div className="grid md:grid-cols-3 gap-6">
-              {/* Game Rules Card */}
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl md:col-span-1 h-fit">
-                <h3 className="text-lg font-bold text-white flex items-center gap-2 mb-4 border-b border-slate-800 pb-4">
+            <div className="grid lg:grid-cols-3 gap-6">
+              
+              <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-6 lg:col-span-1 h-fit">
+                <h3 className="text-base font-bold text-white flex items-center gap-2 mb-6">
                   <Settings className="w-5 h-5 text-blue-400" /> Game Rules
                 </h3>
-                
-                <div className="space-y-4">
+                <div className="space-y-5">
                   <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-1">Max System Net Worth</label>
-                    <input
-                      type="number"
-                      value={settingsDraft.maxSystemNW}
-                      onChange={e => handleConfigChange('maxSystemNW', e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white font-mono focus:outline-none focus:border-blue-500"
-                    />
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">Max System Net Worth</label>
+                    <input type="number" value={settingsDraft.maxSystemNW} onChange={e => handleConfigChange('maxSystemNW', e.target.value)}
+                      className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white font-mono focus:outline-none focus:border-blue-500 transition-colors" />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-1">Payday Salary Amount</label>
-                    <input
-                      type="number"
-                      value={settingsDraft.salaryAmount}
-                      onChange={e => handleConfigChange('salaryAmount', e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white font-mono focus:outline-none focus:border-blue-500"
-                    />
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">Payday Salary Amount</label>
+                    <input type="number" value={settingsDraft.salaryAmount} onChange={e => handleConfigChange('salaryAmount', e.target.value)}
+                      className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white font-mono focus:outline-none focus:border-blue-500 transition-colors" />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-slate-300 mb-1">Payday Interval (Days)</label>
-                    <input
-                      type="number"
-                      value={settingsDraft.paydayInterval}
-                      onChange={e => handleConfigChange('paydayInterval', e.target.value)}
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg p-2.5 text-white font-mono focus:outline-none focus:border-blue-500"
-                    />
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">Payday Interval (Days)</label>
+                    <input type="number" value={settingsDraft.paydayInterval} onChange={e => handleConfigChange('paydayInterval', e.target.value)}
+                      className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white font-mono focus:outline-none focus:border-blue-500 transition-colors" />
                   </div>
                 </div>
               </div>
 
-              {/* Roster Card */}
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 shadow-xl md:col-span-2">
-                <div className="flex justify-between items-center mb-4 border-b border-slate-800 pb-4">
-                  <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                    <Trophy className="w-5 h-5 text-yellow-500" /> Player Roster
+              <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-6 lg:col-span-2">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <Users className="w-5 h-5 text-amber-500" /> Player Roster
                   </h3>
-                  <button
-                    onClick={addPlayer}
-                    className="flex items-center gap-1 text-sm bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg transition-colors"
-                  >
-                    <Plus className="w-4 h-4" /> Add Player
+                  <button onClick={addPlayer} className="flex items-center gap-1.5 text-xs font-bold bg-white/5 hover:bg-white/10 text-white px-3 py-2 rounded-lg transition-colors">
+                    <Plus className="w-4 h-4" /> Add
                   </button>
                 </div>
 
                 <div className="space-y-3">
                   {settingsDraft.players.map((p, idx) => (
-                    <div key={p.id} className="flex gap-3 items-center bg-slate-950 p-3 rounded-lg border border-slate-800">
-                      <div className="w-12 text-center bg-slate-900 rounded py-1 border border-slate-800 text-slate-500 text-xs font-bold shrink-0">
-                        {p.id}
-                      </div>
+                    <div key={p.id} className="flex gap-3 items-center bg-zinc-950/50 p-3 rounded-xl border border-white/5 group">
+                      <div className="w-10 text-center text-zinc-600 text-xs font-bold shrink-0">{p.id}</div>
                       <div className="flex-1">
-                        <input
-                          type="text"
-                          value={p.name}
-                          onChange={e => handlePlayerChange(idx, 'name', e.target.value)}
-                          placeholder="Player Name"
-                          className="w-full bg-transparent text-white font-medium focus:outline-none"
-                        />
+                        <input type="text" value={p.name} onChange={e => handlePlayerChange(idx, 'name', e.target.value)} placeholder="Player Name"
+                          className="w-full bg-transparent text-zinc-200 font-medium focus:outline-none" />
                       </div>
-                      <div className="w-32 shrink-0">
-                        <div className="flex items-center bg-slate-900 rounded border border-slate-800 px-2">
-                          <span className="text-slate-500 text-xs">$</span>
-                          <input
-                            type="number"
-                            value={p.startBalance}
-                            onChange={e => handlePlayerChange(idx, 'startBalance', e.target.value)}
-                            className="w-full bg-transparent p-1.5 text-white font-mono text-sm focus:outline-none text-right"
-                          />
-                        </div>
+                      <div className="w-28 shrink-0 flex items-center bg-zinc-900 rounded-lg border border-white/5 px-2 focus-within:border-amber-500/50 transition-colors">
+                        <span className="text-zinc-500 text-xs">$</span>
+                        <input type="number" value={p.startBalance} onChange={e => handlePlayerChange(idx, 'startBalance', e.target.value)}
+                          className="w-full bg-transparent p-2 text-white font-mono text-sm focus:outline-none text-right" />
                       </div>
-                      <button
-                        onClick={() => removePlayer(idx)}
-                        className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors shrink-0"
-                        title="Remove Player"
-                      >
+                      <button onClick={() => removePlayer(idx)} className="p-2 text-zinc-600 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors shrink-0">
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
@@ -799,6 +717,27 @@ export default function App() {
 
       </main>
 
+      {/* ── Mobile Bottom Navigation ── */}
+      <div className="md:hidden fixed bottom-6 left-4 right-4 z-40">
+        <nav className="bg-[#09090b]/90 backdrop-blur-xl border border-white/10 rounded-2xl flex justify-around p-2 shadow-2xl">
+          {navItems.map(tab => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`flex flex-col items-center justify-center w-full py-2 rounded-xl transition-all duration-200 ${
+                  isActive ? 'text-amber-400' : 'text-zinc-500 hover:text-zinc-300'
+                }`}
+              >
+                <tab.icon className={`h-5 w-5 mb-1 ${isActive ? 'fill-amber-400/20' : ''}`} />
+                <span className="text-[10px] font-semibold tracking-wide">{tab.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+
       {/* ════════ RECORD SESSION MODAL ════════ */}
       {showSessionModal && (() => {
         const draftState = getSystemStateAtDay(Number(sessionDay) || 0);
@@ -808,93 +747,62 @@ export default function App() {
         const isTargetDayPayday = Number(sessionDay) > 0 && Number(sessionDay) % config.paydayInterval === 0;
 
         return (
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
-            <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-2xl shadow-2xl my-8">
-              <div className="p-6 border-b border-slate-800 flex justify-between items-center sticky top-0 bg-slate-900 rounded-t-2xl z-10">
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm sm:p-4 animate-in fade-in">
+            <div className="bg-[#09090b] sm:bg-zinc-900/90 border border-white/10 rounded-t-3xl sm:rounded-3xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh]">
+              
+              <div className="p-5 border-b border-white/5 flex justify-between items-center bg-white/5 rounded-t-3xl">
                 <div>
-                  <h3 className="text-xl font-bold text-white">Record Table Balances</h3>
-                  <p className="text-sm text-slate-400">Update physical chip counts. {isTargetDayPayday ? <span className="text-emerald-400">Payday salary was auto-added!</span> : "Unchanged values carry over."}</p>
+                  <h3 className="text-lg font-bold text-white">Record Chips</h3>
+                  <p className="text-xs text-zinc-400 mt-1">{isTargetDayPayday ? <span className="text-emerald-400 font-medium">Payday distributed automatically.</span> : "Update end-of-day balances."}</p>
                 </div>
-                <button
-                  onClick={() => setShowSessionModal(false)}
-                  className="text-slate-500 hover:text-white p-2 rounded-lg hover:bg-slate-800 transition"
-                >
-                  <X className="h-6 w-6" />
+                <button onClick={() => setShowSessionModal(false)} className="bg-white/10 text-zinc-300 hover:text-white p-2 rounded-full transition-colors">
+                  <X className="h-5 w-5" />
                 </button>
               </div>
 
-              <div className="p-6">
-                <div className="mb-6">
-                  <label className="block text-sm font-medium text-slate-300 mb-2">Day Number</label>
-                  <div className="flex items-center gap-3">
-                    <span className="text-slate-500 font-bold bg-slate-950 px-4 py-3 rounded-lg border border-slate-800">Day</span>
-                    <input
-                      type="number"
-                      value={sessionDay}
-                      onChange={e => setSessionDay(e.target.value)}
-                      className="flex-1 bg-slate-950 border border-slate-800 rounded-lg p-3 text-white font-bold focus:outline-none focus:border-emerald-500 transition-colors"
-                    />
+              <div className="p-5 overflow-y-auto flex-1">
+                <div className="mb-6 flex gap-4">
+                  <div className="flex-1">
+                    <label className="block text-xs font-semibold uppercase text-zinc-500 mb-2">Day</label>
+                    <input type="number" value={sessionDay} onChange={e => setSessionDay(e.target.value)}
+                      className="w-full bg-zinc-950 border border-white/10 rounded-xl p-4 text-white font-bold text-lg focus:outline-none focus:border-emerald-500 transition-colors" />
                   </div>
-                </div>
-
-                <div className="bg-slate-950 rounded-xl p-4 border border-slate-800 mb-6">
-                  <div className="flex justify-between items-center mb-4">
-                    <h4 className="font-semibold text-slate-300">End of Day Chips</h4>
-                    <div className="flex items-center gap-2">
-                      <div className={`text-sm px-3 py-1 rounded-full font-mono ${
-                        circulationDiff === 0
-                          ? 'bg-emerald-500/20 text-emerald-400'
-                          : 'bg-red-500/20 text-red-400 font-bold border border-red-500/30'
-                      }`}>
-                        Diff: {circulationDiff > 0 ? '+' : ''}{circulationDiff} {circulationDiff !== 0 && '(Check Typos!)'}
-                      </div>
-                      <div className="text-sm px-3 py-1 rounded-full font-mono bg-slate-800 text-slate-300">
-                        Total: {draftTotal.toLocaleString()}
-                      </div>
+                  <div className="flex-1 flex flex-col justify-end">
+                    <div className={`p-3 rounded-xl border flex flex-col justify-center h-[56px] ${circulationDiff === 0 ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-rose-500/10 border-rose-500/20'}`}>
+                      <span className="text-[10px] font-bold uppercase text-zinc-500">Diff</span>
+                      <span className={`font-mono font-bold text-sm ${circulationDiff === 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {circulationDiff > 0 ? '+' : ''}{circulationDiff} {circulationDiff !== 0 && '(!)'}
+                      </span>
                     </div>
                   </div>
-
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                    {config.players.map(p => {
-                      const currentBal = Number(sessionDraft[p.id] || 0);
-                      const isEdited = currentBal !== (sessions[0]?.balances?.[p.id] ?? Number(p.startBalance));
-
-                      return (
-                        <div key={p.id} className="relative">
-                          <label className="absolute -top-2 left-2 bg-slate-950 px-1 text-[10px] text-slate-400 uppercase font-semibold">
-                            {p.name} {isEdited && <span className="text-emerald-400">*</span>}
-                          </label>
-                          <input
-                            type="number"
-                            value={sessionDraft[p.id] === 0 ? '' : sessionDraft[p.id]}
-                            placeholder="0"
-                            onChange={e => handleSessionDraftChange(p.id, e.target.value)}
-                            className={`w-full bg-slate-900 border rounded-lg p-3 pt-4 text-white font-mono focus:outline-none transition-colors ${
-                              isEdited ? 'border-emerald-500/50' : 'border-slate-800'
-                            }`}
-                          />
-                        </div>
-                      );
-                    })}
-                  </div>
                 </div>
 
-                <div className="flex justify-end gap-3">
-                  <button
-                    onClick={() => setShowSessionModal(false)}
-                    className="px-5 py-2.5 rounded-lg font-medium text-slate-300 hover:bg-slate-800 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={saveSession}
-                    className="px-5 py-2.5 rounded-lg font-medium bg-emerald-500 text-slate-950 hover:bg-emerald-400 transition-colors flex items-center gap-2"
-                  >
-                    <Check className="h-5 w-5" />
-                    Save Balances
-                  </button>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {config.players.map(p => {
+                    const currentBal = Number(sessionDraft[p.id] || 0);
+                    const isEdited = currentBal !== (sessions[0]?.balances?.[p.id] ?? Number(p.startBalance));
+
+                    return (
+                      <div key={p.id} className="relative group">
+                        <label className="absolute top-2 left-3 text-[10px] text-zinc-500 font-bold uppercase tracking-wider">
+                          {p.name} {isEdited && <span className="text-emerald-400">*</span>}
+                        </label>
+                        <input type="number" value={sessionDraft[p.id] === 0 ? '' : sessionDraft[p.id]} placeholder="0" onChange={e => handleSessionDraftChange(p.id, e.target.value)}
+                          className={`w-full bg-zinc-950 border rounded-xl p-3 pt-6 pb-2 text-white font-mono text-lg focus:outline-none transition-colors ${
+                            isEdited ? 'border-emerald-500/40 bg-emerald-500/5' : 'border-white/5'
+                          }`} />
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
+
+              <div className="p-5 border-t border-white/5 bg-[#09090b] sm:rounded-b-3xl pb-8 sm:pb-5">
+                <button onClick={saveSession} className="w-full py-4 rounded-xl font-bold bg-emerald-500 text-emerald-950 hover:bg-emerald-400 transition-colors flex justify-center items-center gap-2">
+                  <Check className="h-5 w-5" /> Save Day {sessionDay} Balances
+                </button>
+              </div>
+
             </div>
           </div>
         );
@@ -902,68 +810,48 @@ export default function App() {
 
       {/* ════════ RECORD LOAN MODAL ════════ */}
       {showLoanModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden">
-            <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
-              <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                <HandCoins className="h-5 w-5 text-emerald-500" />
-                Record Loan
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm sm:p-4 animate-in fade-in">
+          <div className="bg-[#09090b] sm:bg-zinc-900/90 border border-white/10 rounded-t-3xl sm:rounded-3xl w-full max-w-md shadow-2xl flex flex-col">
+            
+            <div className="p-5 border-b border-white/5 flex justify-between items-center bg-white/5 rounded-t-3xl">
+              <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                <HandCoins className="h-5 w-5 text-amber-500" /> New Loan
               </h3>
-              <button
-                onClick={() => setShowLoanModal(false)}
-                className="text-slate-500 hover:text-white p-1 rounded-md hover:bg-slate-800 transition"
-              >
+              <button onClick={() => setShowLoanModal(false)} className="bg-white/10 text-zinc-300 hover:text-white p-2 rounded-full transition-colors">
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="p-6 space-y-5">
+            <div className="p-5 space-y-5 pb-8 sm:pb-5">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1">Day Issued</label>
-                  <div className="flex items-center bg-slate-950 border border-slate-800 rounded-lg overflow-hidden">
-                    <span className="px-3 text-slate-500 text-sm font-bold bg-slate-900">Day</span>
-                    <input
-                      type="number"
-                      value={loanDraft.dayIssued}
-                      onChange={e => setLoanDraft({ ...loanDraft, dayIssued: Number(e.target.value) })}
-                      className="w-full p-2.5 text-white focus:outline-none focus:bg-slate-800/50"
-                    />
-                  </div>
+                  <label className="block text-xs font-semibold uppercase text-zinc-500 mb-2">Issue Day</label>
+                  <input type="number" value={loanDraft.dayIssued} onChange={e => setLoanDraft({ ...loanDraft, dayIssued: Number(e.target.value) })}
+                    className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3.5 text-white font-mono focus:outline-none focus:border-amber-500 transition-colors" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1">Deadline Day</label>
-                  <div className="flex items-center bg-slate-950 border border-slate-800 rounded-lg overflow-hidden">
-                    <span className="px-3 text-slate-500 text-sm font-bold bg-slate-900">Day</span>
-                    <input
-                      type="number"
-                      value={loanDraft.deadlineDay}
-                      onChange={e => setLoanDraft({ ...loanDraft, deadlineDay: Number(e.target.value) })}
-                      className="w-full p-2.5 text-white focus:outline-none focus:bg-slate-800/50"
-                    />
-                  </div>
+                  <label className="block text-xs font-semibold uppercase text-zinc-500 mb-2">Deadline</label>
+                  <input type="number" value={loanDraft.deadlineDay} onChange={e => setLoanDraft({ ...loanDraft, deadlineDay: Number(e.target.value) })}
+                    className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3.5 text-white font-mono focus:outline-none focus:border-amber-500 transition-colors" />
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-4 relative">
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 translate-y-1 bg-zinc-900 p-1.5 rounded-full border border-white/10 z-10">
+                  <ArrowRightLeft className="w-4 h-4 text-zinc-500" />
+                </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1">Borrower</label>
-                  <select
-                    value={loanDraft.borrower}
-                    onChange={e => setLoanDraft({ ...loanDraft, borrower: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white focus:outline-none focus:border-red-500/50"
-                  >
+                  <label className="block text-xs font-semibold uppercase text-rose-400 mb-2">Borrower</label>
+                  <select value={loanDraft.borrower} onChange={e => setLoanDraft({ ...loanDraft, borrower: e.target.value })}
+                    className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3.5 text-white focus:outline-none focus:border-rose-500 appearance-none">
                     <option value="" disabled>Select...</option>
                     {config.players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1">Lender</label>
-                  <select
-                    value={loanDraft.lender}
-                    onChange={e => setLoanDraft({ ...loanDraft, lender: e.target.value })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white focus:outline-none focus:border-emerald-500/50"
-                  >
+                  <label className="block text-xs font-semibold uppercase text-emerald-400 mb-2">Lender</label>
+                  <select value={loanDraft.lender} onChange={e => setLoanDraft({ ...loanDraft, lender: e.target.value })}
+                    className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3.5 text-white focus:outline-none focus:border-emerald-500 appearance-none">
                     <option value="" disabled>Select...</option>
                     {config.players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
@@ -972,55 +860,43 @@ export default function App() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1">Principal</label>
-                  <input
-                    type="number" min="1"
-                    value={loanDraft.amount || ''}
-                    onChange={e => setLoanDraft({ ...loanDraft, amount: Number(e.target.value) })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white font-mono focus:outline-none focus:border-emerald-500"
-                    placeholder="e.g. 1000"
-                  />
+                  <label className="block text-xs font-semibold uppercase text-zinc-500 mb-2">Principal</label>
+                  <input type="number" min="1" value={loanDraft.amount || ''} placeholder="0" onChange={e => setLoanDraft({ ...loanDraft, amount: Number(e.target.value) })}
+                    className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3.5 text-white font-mono text-lg focus:outline-none focus:border-amber-500 transition-colors" />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1">Interest (%)</label>
-                  <input
-                    type="number" min="0"
-                    value={loanDraft.interest}
-                    onChange={e => setLoanDraft({ ...loanDraft, interest: Number(e.target.value) })}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white font-mono focus:outline-none focus:border-emerald-500"
-                  />
+                  <label className="block text-xs font-semibold uppercase text-zinc-500 mb-2">Interest (%)</label>
+                  <input type="number" min="0" value={loanDraft.interest} onChange={e => setLoanDraft({ ...loanDraft, interest: Number(e.target.value) })}
+                    className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3.5 text-white font-mono text-lg focus:outline-none focus:border-amber-500 transition-colors" />
                 </div>
               </div>
 
-              {/* Live repayment preview */}
               {loanDraft.amount > 0 && (
-                <div className="bg-slate-950 border border-slate-800 rounded-lg px-4 py-3 text-sm flex justify-between items-center">
-                  <span className="text-slate-400">Total repayment obligation</span>
-                  <span className="font-bold text-amber-400 font-mono">
+                <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 flex justify-between items-center">
+                  <span className="text-amber-500/80 text-xs font-bold uppercase tracking-wider">Owed Total</span>
+                  <span className="font-bold text-amber-400 text-xl tabular-nums">
                     {Math.round(loanDraft.amount * (1 + loanDraft.interest / 100)).toLocaleString()}
                   </span>
                 </div>
               )}
 
-              <div className="pt-4 border-t border-slate-800 flex gap-3">
-                <button
-                  onClick={() => setShowLoanModal(false)}
-                  className="flex-1 py-2.5 rounded-lg font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={saveLoan}
-                  disabled={!loanDraft.borrower || !loanDraft.lender || loanDraft.borrower === loanDraft.lender || loanDraft.amount <= 0}
-                  className="flex-1 py-2.5 rounded-lg font-medium bg-emerald-500 text-slate-950 hover:bg-emerald-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Confirm Loan
-                </button>
-              </div>
+              <button onClick={saveLoan} disabled={!loanDraft.borrower || !loanDraft.lender || loanDraft.borrower === loanDraft.lender || loanDraft.amount <= 0}
+                className="w-full py-4 rounded-xl font-bold bg-amber-500 text-amber-950 hover:bg-amber-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed mt-2">
+                Issue Loan
+              </button>
             </div>
           </div>
         </div>
       )}
+
     </div>
   );
+}
+// Add the custom icon for missing lucide import handling
+function Users(props) {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+    </svg>
+  )
 }
