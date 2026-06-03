@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, onSnapshot, doc, setDoc, addDoc, updateDoc, deleteDoc } from 'firebase/firestore';
-import { Trophy, CalendarDays, Plus, Check, X, HandCoins, ArrowRightLeft, AlertCircle, Settings, Trash2, Wallet, Banknote, Crown, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Clock } from 'lucide-react';
+import { getFirestore, collection, onSnapshot, doc, setDoc, addDoc, updateDoc, deleteDoc, getDoc } from 'firebase/firestore';
+import { Trophy, CalendarDays, Plus, Check, X, HandCoins, ArrowRightLeft, AlertCircle, Settings, Trash2, Wallet, Banknote, Crown, TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Clock, Lock, Unlock } from 'lucide-react';
 
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
   apiKey: "AIzaSyDNHughes_fwlOts8OUaXbVb1nQN9VUfcU",
@@ -15,7 +15,10 @@ const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__f
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'poker-championship-app';
+
+// Sanitize appId to ensure it doesn't contain slashes which break Firestore document segment counts
+const rawAppId = typeof __app_id !== 'undefined' ? __app_id : 'poker-championship-app';
+const safeAppId = rawAppId.replace(/\//g, '_');
 
 // ─── Default Configuration ──────────────────────────────────────────────────────
 const DEFAULT_CONFIG = {
@@ -46,8 +49,79 @@ function repaymentAmount(loan) {
   return Math.round(Number(loan.amount) * (1 + Number(loan.interest || 0) / 100));
 }
 
+// ─── PIN Modal Component ────────────────────────────────────────────────────────
+function PinModal({ isOpen, onClose, onLogin, systemPin }) {
+  const [pinInput, setPinInput] = useState('');
+  const [error, setError] = useState(false);
+
+  if (!isOpen) return null;
+
+  const handlePinSubmit = (e) => {
+    e.preventDefault();
+    if (pinInput === systemPin) {
+      onLogin();
+      setPinInput('');
+      onClose();
+    } else {
+      setError(true);
+      setPinInput('');
+      setTimeout(() => setError(false), 2000); // clear error after 2s
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
+      <div className="bg-zinc-900 border border-white/10 p-8 rounded-3xl w-full max-w-sm flex flex-col items-center shadow-2xl relative">
+        <button onClick={onClose} className="absolute top-4 right-4 text-zinc-500 hover:text-white transition-colors bg-white/5 hover:bg-white/10 p-2 rounded-full">
+          <X className="w-5 h-5" />
+        </button>
+        <div className="bg-gradient-to-br from-amber-400 to-orange-600 p-3 rounded-2xl shadow-[0_0_20px_rgba(245,158,11,0.2)] mb-6">
+          <Lock className="h-8 w-8 text-white" />
+        </div>
+        <h2 className="text-2xl font-bold text-white mb-2 text-center tracking-tight">Admin Access</h2>
+        <p className="text-zinc-500 text-sm mb-8 text-center">Enter PIN to unlock controls.</p>
+
+        <form onSubmit={handlePinSubmit} className="w-full">
+          <div className="relative mb-6">
+            <input
+              type="password"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              value={pinInput}
+              onChange={(e) => setPinInput(e.target.value)}
+              placeholder="••••"
+              className={`w-full bg-zinc-950 border rounded-xl p-4 text-center text-white font-mono text-2xl tracking-[0.5em] focus:outline-none transition-colors ${
+                error ? 'border-rose-500/50 bg-rose-500/5 focus:border-rose-500' : 'border-white/10 focus:border-amber-500'
+              }`}
+              autoFocus
+            />
+            {error && (
+              <p className="absolute -bottom-6 left-0 right-0 text-center text-xs text-rose-400 font-semibold animate-in slide-in-from-top-1">
+                Incorrect PIN
+              </p>
+            )}
+          </div>
+          <button
+            type="submit"
+            className="w-full py-3.5 rounded-xl font-bold bg-amber-500 text-amber-950 hover:bg-amber-400 transition-all shadow-[0_0_15px_rgba(245,158,11,0.15)] flex justify-center items-center gap-2"
+          >
+            Unlock <Unlock className="w-4 h-4" />
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [user, setUser]           = useState(null);
+  
+  // App State
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [systemPin, setSystemPin]             = useState(null);
+  const [isCheckingPin, setIsCheckingPin]     = useState(true);
+  const [showPinModal, setShowPinModal]       = useState(false);
+
   const [activeTab, setActiveTab] = useState('dashboard');
   const [sessions, setSessions]   = useState([]);
   const [loans, setLoans]         = useState([]);
@@ -90,9 +164,34 @@ export default function App() {
   // ── Firestore listeners ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!user) return;
-    const configRef   = doc(db, 'artifacts', appId, 'public', 'config');
-    const sessionsRef = collection(db, 'artifacts', appId, 'public', 'data', 'sessions');
-    const loansRef    = collection(db, 'artifacts', appId, 'public', 'data', 'loans');
+    
+    // Safely formatted collection and doc references to ensure correct segment counts
+    const configRef   = doc(db, 'artifacts', safeAppId, 'public', 'data', 'config', 'main');
+    const sessionsRef = collection(db, 'artifacts', safeAppId, 'public', 'data', 'sessions');
+    const loansRef    = collection(db, 'artifacts', safeAppId, 'public', 'data', 'loans');
+    const pinRef      = doc(db, 'artifacts', safeAppId, 'public', 'data', 'auth', 'pin');
+
+    // Fetch PIN
+    const fetchPin = async () => {
+      try {
+        const pinDoc = await getDoc(pinRef);
+        if (pinDoc.exists() && pinDoc.data().value) {
+          setSystemPin(pinDoc.data().value);
+        } else {
+          // If no PIN document exists, default to '1234' or bypass entirely.
+          // For security, let's establish a default if none is found in the DB.
+          console.log("No PIN found in DB, defaulting to '0000'");
+          setSystemPin("0000"); 
+        }
+      } catch (error) {
+        console.error("Error fetching PIN:", error);
+        setSystemPin("0000"); // Fallback PIN on error
+      } finally {
+        setIsCheckingPin(false);
+      }
+    };
+    fetchPin();
+
 
     const unsubConfig = onSnapshot(configRef, snap => {
       if (snap.exists()) {
@@ -212,7 +311,7 @@ export default function App() {
 
   const saveSettings = async () => {
     if (!user) return;
-    try { await setDoc(doc(db, 'artifacts', appId, 'public', 'config'), settingsDraft); } 
+    try { await setDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'config', 'main'), settingsDraft); } 
     catch (err) { console.error("Error saving config:", err); }
   };
 
@@ -241,7 +340,7 @@ export default function App() {
   const saveSession = async () => {
     if (!user) return;
     try {
-      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'sessions'), {
+      await addDoc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'sessions'), {
         dayNumber:   Number(sessionDay),
         balances:    sessionDraft,
         recordedAt:  new Date().toISOString(),
@@ -253,7 +352,7 @@ export default function App() {
 
   const deleteSession = async (id) => {
     if (!user) return;
-    try { await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sessions', id)); } 
+    try { await deleteDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'sessions', id)); } 
     catch (err) { console.error('Error deleting session:', err); }
   };
 
@@ -265,7 +364,7 @@ export default function App() {
   const saveLoan = async () => {
     if (!user || !loanDraft.borrower || !loanDraft.lender || loanDraft.amount <= 0) return;
     try {
-      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'loans'), {
+      await addDoc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'loans'), {
         ...loanDraft, status: 'active', recordedAt: new Date().toISOString(), recordedBy: user.uid,
       });
       setShowLoanModal(false);
@@ -278,7 +377,7 @@ export default function App() {
       const isSettling = loan.status === 'active';
       const repayAmount = repaymentAmount(loan);
 
-      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'loans', loan.id), {
+      await updateDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'loans', loan.id), {
         status: isSettling ? 'settled' : 'active',
         settledDay: isSettling ? currentDay : null,
       });
@@ -297,14 +396,17 @@ export default function App() {
           newBalances[loan.lender]   = lenderBal - repayAmount;
         }
 
-        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'sessions', latestSession.id), { balances: newBalances });
+        await updateDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'sessions', latestSession.id), { balances: newBalances });
       }
     } catch (err) { console.error('Error updating loan:', err); }
   };
 
   const getPlayerName = id => config.players.find(p => p.id === id)?.name || id;
 
-  if (loading) {
+  // ── Render States ─────────────────────────────────────────────────────────────
+
+  // 1. Show Loading State if auth/data isn't ready
+  if (loading || !user || isCheckingPin) {
     return (
       <div className="flex h-screen items-center justify-center bg-[#09090b] text-zinc-200">
         <div className="animate-pulse flex flex-col items-center">
@@ -315,6 +417,7 @@ export default function App() {
     );
   }
 
+  // 2. Show Main App
   const navItems = [
     { id: 'dashboard', icon: Trophy,       label: 'Leaderboard' },
     { id: 'sessions',  icon: CalendarDays, label: 'Sessions' },
@@ -341,22 +444,37 @@ export default function App() {
           </div>
 
           {/* Desktop Nav */}
-          <nav className="hidden md:flex items-center bg-white/5 p-1 rounded-xl border border-white/5">
-            {navItems.map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                  activeTab === tab.id
-                    ? 'bg-zinc-800 text-amber-400 shadow-sm'
-                    : 'text-zinc-400 hover:text-zinc-100 hover:bg-white/5'
-                }`}
-              >
-                <tab.icon className="h-4 w-4" />
-                {tab.label}
-              </button>
-            ))}
-          </nav>
+          <div className="flex items-center gap-4">
+            <nav className="hidden md:flex items-center bg-white/5 p-1 rounded-xl border border-white/5">
+              {navItems.map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
+                    activeTab === tab.id
+                      ? 'bg-zinc-800 text-amber-400 shadow-sm'
+                      : 'text-zinc-400 hover:text-zinc-100 hover:bg-white/5'
+                  }`}
+                >
+                  <tab.icon className="h-4 w-4" />
+                  {tab.label}
+                </button>
+              ))}
+            </nav>
+            
+            {/* Admin Toggle */}
+            <button
+              onClick={() => isAuthenticated ? setIsAuthenticated(false) : setShowPinModal(true)}
+              className={`p-2 rounded-xl border transition-all ${
+                isAuthenticated
+                  ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20'
+                  : 'bg-zinc-900 border-white/10 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
+              }`}
+              title={isAuthenticated ? "Lock Admin Controls" : "Unlock Admin Controls"}
+            >
+              {isAuthenticated ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -482,13 +600,15 @@ export default function App() {
                 <h2 className="text-xl font-bold text-white">Daily Ledger</h2>
                 <p className="text-sm text-zinc-500">Record physical table chips.</p>
               </div>
-              <button
-                onClick={openSessionModal}
-                className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-bold py-2.5 px-5 rounded-xl transition-all shadow-[0_0_20px_rgba(16,185,129,0.2)]"
-              >
-                <Plus className="h-5 w-5" />
-                <span className="hidden sm:inline">Record Day</span>
-              </button>
+              {isAuthenticated && (
+                <button
+                  onClick={openSessionModal}
+                  className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-bold py-2.5 px-5 rounded-xl transition-all shadow-[0_0_20px_rgba(16,185,129,0.2)]"
+                >
+                  <Plus className="h-5 w-5" />
+                  <span className="hidden sm:inline">Record Day</span>
+                </button>
+              )}
             </div>
 
             {sessions.length === 0 ? (
@@ -531,12 +651,14 @@ export default function App() {
                           </div>
                           <h3 className="text-xl font-bold text-white">Day {session.dayNumber}</h3>
                         </div>
-                        <button
-                          onClick={() => { if (window.confirm(`Delete Day ${session.dayNumber}?`)) deleteSession(session.id); }}
-                          className="text-zinc-600 hover:text-rose-400 transition-colors bg-zinc-900 hover:bg-rose-500/10 p-2 rounded-lg"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
+                        {isAuthenticated && (
+                          <button
+                            onClick={() => { if (window.confirm(`Delete Day ${session.dayNumber}?`)) deleteSession(session.id); }}
+                            className="text-zinc-600 hover:text-rose-400 transition-colors bg-zinc-900 hover:bg-rose-500/10 p-2 rounded-lg"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
 
                       <div className="flex-1 overflow-y-auto pr-1 space-y-2.5">
@@ -570,13 +692,15 @@ export default function App() {
                 <h2 className="text-xl font-bold text-white">Loan Ledger</h2>
                 <p className="text-sm text-zinc-500">Track player-to-player debts.</p>
               </div>
-              <button
-                onClick={openLoanModal}
-                className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold py-2.5 px-5 rounded-xl transition-all shadow-[0_0_20px_rgba(245,158,11,0.2)]"
-              >
-                <Plus className="h-5 w-5" />
-                <span className="hidden sm:inline">New Loan</span>
-              </button>
+              {isAuthenticated && (
+                <button
+                  onClick={openLoanModal}
+                  className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold py-2.5 px-5 rounded-xl transition-all shadow-[0_0_20px_rgba(245,158,11,0.2)]"
+                >
+                  <Plus className="h-5 w-5" />
+                  <span className="hidden sm:inline">New Loan</span>
+                </button>
+              )}
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -598,16 +722,18 @@ export default function App() {
                       <div className={`text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wider ${loan.status === 'active' ? 'bg-amber-500/10 text-amber-500' : 'bg-zinc-800 text-zinc-400'}`}>
                         {loan.status === 'active' ? 'Active' : 'Settled'}
                       </div>
-                      <button
-                        onClick={() => toggleLoanStatus(loan)}
-                        className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
-                          loan.status === 'active'
-                            ? 'bg-zinc-800 hover:bg-emerald-500/20 text-zinc-300 hover:text-emerald-400'
-                            : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'
-                        }`}
-                      >
-                        {loan.status === 'active' ? 'Settle' : 'Re-open'}
-                      </button>
+                      {isAuthenticated && (
+                        <button
+                          onClick={() => toggleLoanStatus(loan)}
+                          className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
+                            loan.status === 'active'
+                              ? 'bg-zinc-800 hover:bg-emerald-500/20 text-zinc-300 hover:text-emerald-400'
+                              : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'
+                          }`}
+                        >
+                          {loan.status === 'active' ? 'Settle' : 'Re-open'}
+                        </button>
+                      )}
                     </div>
 
                     <div className="flex items-center justify-between bg-zinc-950/50 p-3 rounded-xl mb-4 border border-white/5">
@@ -642,76 +768,90 @@ export default function App() {
         {/* ════════ SETTINGS ════════ */}
         {activeTab === 'settings' && (
           <div className="space-y-6 animate-in fade-in duration-500">
-            <div className="flex justify-between items-end gap-4">
-              <div>
-                <h2 className="text-xl font-bold text-white">Settings</h2>
-                <p className="text-sm text-zinc-500">Configure rules & players.</p>
+            {!isAuthenticated ? (
+              <div className="text-center py-20 bg-zinc-900/30 border border-white/5 rounded-3xl border-dashed">
+                <Lock className="h-12 w-12 text-zinc-700 mx-auto mb-4" />
+                <h3 className="text-lg font-medium text-zinc-300">Settings Locked</h3>
+                <p className="text-zinc-500 text-sm mt-1 mb-6">Admin access is required to change rules and roster.</p>
+                <button onClick={() => setShowPinModal(true)} className="bg-amber-500 text-amber-950 font-bold py-2.5 px-6 rounded-xl hover:bg-amber-400 transition-colors shadow-[0_0_20px_rgba(245,158,11,0.2)]">
+                  Unlock Controls
+                </button>
               </div>
-              <button
-                onClick={saveSettings}
-                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2.5 px-5 rounded-xl transition-all shadow-[0_0_20px_rgba(37,99,235,0.2)]"
-              >
-                <Check className="h-5 w-5" />
-                <span className="hidden sm:inline">Save</span>
-              </button>
-            </div>
-
-            <div className="grid lg:grid-cols-3 gap-6">
-              
-              <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-6 lg:col-span-1 h-fit">
-                <h3 className="text-base font-bold text-white flex items-center gap-2 mb-6">
-                  <Settings className="w-5 h-5 text-blue-400" /> Game Rules
-                </h3>
-                <div className="space-y-5">
+            ) : (
+              <>
+                <div className="flex justify-between items-end gap-4">
                   <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">Max System Net Worth</label>
-                    <input type="number" value={settingsDraft.maxSystemNW} onChange={e => handleConfigChange('maxSystemNW', e.target.value)}
-                      className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white font-mono focus:outline-none focus:border-blue-500 transition-colors" />
+                    <h2 className="text-xl font-bold text-white">Settings</h2>
+                    <p className="text-sm text-zinc-500">Configure rules & players.</p>
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">Payday Salary Amount</label>
-                    <input type="number" value={settingsDraft.salaryAmount} onChange={e => handleConfigChange('salaryAmount', e.target.value)}
-                      className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white font-mono focus:outline-none focus:border-blue-500 transition-colors" />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">Payday Interval (Days)</label>
-                    <input type="number" value={settingsDraft.paydayInterval} onChange={e => handleConfigChange('paydayInterval', e.target.value)}
-                      className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white font-mono focus:outline-none focus:border-blue-500 transition-colors" />
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-6 lg:col-span-2">
-                <div className="flex justify-between items-center mb-6">
-                  <h3 className="text-base font-bold text-white flex items-center gap-2">
-                    <Users className="w-5 h-5 text-amber-500" /> Player Roster
-                  </h3>
-                  <button onClick={addPlayer} className="flex items-center gap-1.5 text-xs font-bold bg-white/5 hover:bg-white/10 text-white px-3 py-2 rounded-lg transition-colors">
-                    <Plus className="w-4 h-4" /> Add
+                  <button
+                    onClick={saveSettings}
+                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2.5 px-5 rounded-xl transition-all shadow-[0_0_20px_rgba(37,99,235,0.2)]"
+                  >
+                    <Check className="h-5 w-5" />
+                    <span className="hidden sm:inline">Save</span>
                   </button>
                 </div>
 
-                <div className="space-y-3">
-                  {settingsDraft.players.map((p, idx) => (
-                    <div key={p.id} className="flex gap-3 items-center bg-zinc-950/50 p-3 rounded-xl border border-white/5 group">
-                      <div className="w-10 text-center text-zinc-600 text-xs font-bold shrink-0">{p.id}</div>
-                      <div className="flex-1">
-                        <input type="text" value={p.name} onChange={e => handlePlayerChange(idx, 'name', e.target.value)} placeholder="Player Name"
-                          className="w-full bg-transparent text-zinc-200 font-medium focus:outline-none" />
+                <div className="grid lg:grid-cols-3 gap-6">
+                  {/* Game Rules Column (This container was accidentally deleted!) */}
+                  <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-6 lg:col-span-1 h-fit">
+                    <h3 className="text-base font-bold text-white flex items-center gap-2 mb-6">
+                      <Settings className="w-5 h-5 text-blue-400" /> Game Rules
+                    </h3>
+                    <div className="space-y-5">
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">Max System Net Worth</label>
+                        <input type="number" value={settingsDraft.maxSystemNW} onChange={e => handleConfigChange('maxSystemNW', e.target.value)}
+                          className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white font-mono focus:outline-none focus:border-blue-500 transition-colors" />
                       </div>
-                      <div className="w-28 shrink-0 flex items-center bg-zinc-900 rounded-lg border border-white/5 px-2 focus-within:border-amber-500/50 transition-colors">
-                        <span className="text-zinc-500 text-xs">$</span>
-                        <input type="number" value={p.startBalance} onChange={e => handlePlayerChange(idx, 'startBalance', e.target.value)}
-                          className="w-full bg-transparent p-2 text-white font-mono text-sm focus:outline-none text-right" />
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">Payday Salary Amount</label>
+                        <input type="number" value={settingsDraft.salaryAmount} onChange={e => handleConfigChange('salaryAmount', e.target.value)}
+                          className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white font-mono focus:outline-none focus:border-blue-500 transition-colors" />
                       </div>
-                      <button onClick={() => removePlayer(idx)} className="p-2 text-zinc-600 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors shrink-0">
-                        <Trash2 className="w-4 h-4" />
+                      <div>
+                        <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">Payday Interval (Days)</label>
+                        <input type="number" value={settingsDraft.paydayInterval} onChange={e => handleConfigChange('paydayInterval', e.target.value)}
+                          className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white font-mono focus:outline-none focus:border-blue-500 transition-colors" />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Player Roster Column */}
+                  <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-6 lg:col-span-2">
+                    <div className="flex justify-between items-center mb-6">
+                      <h3 className="text-base font-bold text-white flex items-center gap-2">
+                        <Users className="w-5 h-5 text-amber-500" /> Player Roster
+                      </h3>
+                      <button onClick={addPlayer} className="flex items-center gap-1.5 text-xs font-bold bg-white/5 hover:bg-white/10 text-white px-3 py-2 rounded-lg transition-colors">
+                        <Plus className="w-4 h-4" /> Add
                       </button>
                     </div>
-                  ))}
+
+                    <div className="space-y-3">
+                      {settingsDraft.players.map((p, idx) => (
+                        <div key={p.id} className="flex gap-3 items-center bg-zinc-950/50 p-3 rounded-xl border border-white/5 group">
+                          <div className="w-10 text-center text-zinc-600 text-xs font-bold shrink-0">{p.id}</div>
+                          <div className="flex-1">
+                            <input type="text" value={p.name} onChange={e => handlePlayerChange(idx, 'name', e.target.value)} placeholder="Player Name"
+                              className="w-full bg-transparent text-zinc-200 font-medium focus:outline-none" />
+                          </div>
+                          <div className="w-28 shrink-0 flex items-center bg-zinc-900 rounded-lg border border-white/5 px-2 focus-within:border-amber-500/50 transition-colors">
+                            <span className="text-zinc-500 text-xs">$</span>
+                            <input type="number" value={p.startBalance} onChange={e => handlePlayerChange(idx, 'startBalance', e.target.value)}
+                              className="w-full bg-transparent p-2 text-white font-mono text-sm focus:outline-none text-right" />
+                          </div>
+                          <button onClick={() => removePlayer(idx)} className="p-2 text-zinc-600 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors shrink-0">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
+              </>
+            )}
           </div>
         )}
 
@@ -737,6 +877,14 @@ export default function App() {
           })}
         </nav>
       </div>
+
+      {/* ════════ PIN MODAL ════════ */}
+      <PinModal
+        isOpen={showPinModal}
+        onClose={() => setShowPinModal(false)}
+        onLogin={() => setIsAuthenticated(true)}
+        systemPin={systemPin}
+      />
 
       {/* ════════ RECORD SESSION MODAL ════════ */}
       {showSessionModal && (() => {
@@ -892,6 +1040,7 @@ export default function App() {
     </div>
   );
 }
+
 // Add the custom icon for missing lucide import handling
 function Users(props) {
   return (
