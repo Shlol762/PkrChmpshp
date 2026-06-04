@@ -9,7 +9,9 @@ A premium, real-time web application to track custom poker league championships.
 * **🏆 Real-Time Leaderboard**: Tracks player net worth, table balances, poker profit/loss (P/L), and salary payout histories. Highlights top-performing players with dynamic ranks.
 * **📅 Daily Ledger (Sessions)**: Record physical table chips at the end of each session. The app calculates daily P/L per player relative to the previous day and handles salary bumps automatically.
 * **💸 Loan Ledger**: Track peer-to-peer debts (Borrower, Lender, Principal, Interest Rate). Settling loans automatically adjusts table balances of the involved players.
-* **🔒 Admin Controls**: Key settings (Game Rules, Player Roster) are PIN-protected to prevent unauthorized modifications.
+* **🎲 Virtual Table Manager**: Host turn-by-turn digital poker games using virtual chips. Manages live dealer button rotation, automatic blind postings, pot calculations, and showdown payout distribution.
+* **📱 Multi-Device Live Play**: Players can claim their seat on their own phones using a secure, individual player PIN. When it's their turn to act, the action controls (Fold, Check, Call, Raise) unlock on their device, updating the live table state in real-time.
+* **🔒 Admin Controls**: Key settings (Game Rules, Player Roster, Player PIN configuration) are PIN-protected to prevent unauthorized modifications. The host retains control of starting/ending games and override capabilities.
 * **⚙️ Configurable Game Rules**: Easily adjust maximum system net worth, payday salary amount, and payday intervals.
 
 ---
