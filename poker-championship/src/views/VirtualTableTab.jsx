@@ -27,8 +27,16 @@ export default function VirtualTableTab({
   config,
   liveGame,
   currentDay,
-  sessions
+  sessions,
+  currentPlayerId,
+  setCurrentPlayerId
 }) {
+  // Setup local states for Seat Claiming
+  const [claimPlayerId, setClaimPlayerId] = useState('');
+  const [claimPin, setClaimPin] = useState('');
+  const [claimError, setClaimError] = useState('');
+  const [isSpectator, setIsSpectator] = useState(false);
+
   // Setup local states
   const [selectedPlayers, setSelectedPlayers] = useState(
     config.players.reduce((acc, p) => ({ ...acc, [p.id]: true }), {})
@@ -121,7 +129,10 @@ export default function VirtualTableTab({
 
   // State update runner
   const updateDbState = async (nextState) => {
-    if (!isAuthenticated) return;
+    const isMyTurn = liveGame && liveGame.active && liveGame.actingPlayerIndex !== -1 && 
+      (liveGame.players[liveGame.actingPlayerIndex]?.id === currentPlayerId);
+
+    if (!isAuthenticated && !isMyTurn) return;
     try {
       await setDoc(gameDocRef, {
         ...nextState,
@@ -178,7 +189,8 @@ export default function VirtualTableTab({
   };
 
   const handleAction = async (actionType, payload = null) => {
-    if (!liveGame || !actingPlayer || !isAuthenticated) return;
+    const isMyTurn = currentPlayerId && actingPlayer && actingPlayer.id === currentPlayerId;
+    if (!liveGame || !actingPlayer || (!isAuthenticated && !isMyTurn)) return;
 
     const updatedPlayers = liveGame.players.map(p => ({ ...p }));
     const player = updatedPlayers[liveGame.actingPlayerIndex];
@@ -587,15 +599,136 @@ export default function VirtualTableTab({
     );
   }
 
+  // ── Rendering Claim Seat Screen ─────────────────────────────────────────────
+  if (!isAuthenticated && !currentPlayerId && !isSpectator) {
+    const liveGamePlayerIds = liveGame.players.map(p => p.id);
+    const selectablePlayers = config.players.filter(p => liveGamePlayerIds.includes(p.id));
+
+    return (
+      <div className="max-w-md mx-auto space-y-6 animate-in fade-in duration-500 py-8">
+        <div className="bg-zinc-900/40 border border-white/5 p-6 rounded-3xl space-y-6 shadow-2xl">
+          <div className="text-center">
+            <Trophy className="h-10 w-10 text-amber-500 mx-auto mb-3" />
+            <h2 className="text-xl font-bold text-white tracking-tight">Claim Your Seat</h2>
+            <p className="text-xs text-zinc-500 mt-1.5 leading-relaxed">
+              Select your name and enter your player PIN to control your actions on this phone.
+            </p>
+          </div>
+
+          {claimError && (
+            <div className="bg-rose-500/10 border border-rose-500/20 text-rose-400 py-2.5 px-3.5 rounded-xl text-xs font-semibold flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>{claimError}</span>
+            </div>
+          )}
+
+          <div className="space-y-4">
+            <div>
+              <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider mb-2 block">Choose Player</label>
+              <select
+                value={claimPlayerId}
+                onChange={(e) => {
+                  setClaimPlayerId(e.target.value);
+                  setClaimError('');
+                }}
+                className="bg-zinc-950 border border-white/10 rounded-xl py-2.5 px-4 text-zinc-200 text-sm font-semibold w-full focus:outline-none focus:border-amber-500/50"
+              >
+                <option value="">Select your name...</option>
+                {selectablePlayers.map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider mb-2 block">Enter Your PIN</label>
+              <input
+                type="password"
+                inputMode="numeric"
+                maxLength={4}
+                placeholder="••••"
+                value={claimPin}
+                onChange={(e) => {
+                  setClaimPin(e.target.value.replace(/\D/g, ''));
+                  setClaimError('');
+                }}
+                className="bg-zinc-950 border border-white/10 rounded-xl py-2.5 px-4 text-zinc-200 font-mono text-center text-lg tracking-widest w-full focus:outline-none focus:border-amber-500/50"
+              />
+            </div>
+
+            <button
+              onClick={() => {
+                if (!claimPlayerId) {
+                  setClaimError("Please select a player.");
+                  return;
+                }
+                const player = config.players.find(p => p.id === claimPlayerId);
+                const correctPin = player?.pin || '0000';
+                if (claimPin === correctPin) {
+                  setCurrentPlayerId(claimPlayerId);
+                  localStorage.setItem('poker_player_id', claimPlayerId);
+                } else {
+                  setClaimError("Incorrect PIN. Please ask the host for your PIN.");
+                }
+              }}
+              className="w-full bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold py-3 px-6 rounded-2xl transition-all shadow-[0_0_20px_rgba(245,158,11,0.2)] text-sm cursor-pointer"
+            >
+              Confirm & Unlock Seat
+            </button>
+
+            <div className="text-center pt-2">
+              <button
+                onClick={() => setIsSpectator(true)}
+                className="text-xs text-zinc-500 hover:text-zinc-300 font-medium transition-colors underline underline-offset-4"
+              >
+                Just view the table (Spectator Mode)
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ── Rendering Active Game Screen ────────────────────────────────────────────
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       
-      {/* Read-only warning badge */}
-      {!isAuthenticated && (
-        <div className="bg-amber-500/10 border border-amber-500/20 text-amber-400 py-3 px-4 rounded-2xl flex items-center gap-2.5 text-sm font-semibold">
-          <Eye className="w-5 h-5" />
-          <span>Viewing Live Game (Read Only). The host is managing the game. Stacks sync live!</span>
+      {/* Player seat identification / Spectator warning badge */}
+      {!isAuthenticated && currentPlayerId && (
+        <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 py-3 px-4 rounded-2xl flex items-center justify-between gap-2.5 text-sm font-semibold">
+          <div className="flex items-center gap-2.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span>Playing as: <strong className="text-white">{config.players.find(p => p.id === currentPlayerId)?.name || currentPlayerId}</strong></span>
+          </div>
+          <button
+            onClick={() => {
+              if (window.confirm("Are you sure you want to vacate this seat?")) {
+                setCurrentPlayerId(null);
+                localStorage.removeItem('poker_player_id');
+                setClaimPlayerId('');
+                setClaimPin('');
+              }
+            }}
+            className="text-xs text-zinc-400 hover:text-zinc-200 bg-white/5 hover:bg-white/10 px-2.5 py-1 rounded-lg transition-all cursor-pointer font-bold"
+          >
+            Leave Seat
+          </button>
+        </div>
+      )}
+
+      {!isAuthenticated && !currentPlayerId && (
+        <div className="bg-amber-500/10 border border-amber-500/20 text-amber-400 py-3 px-4 rounded-2xl flex items-center justify-between gap-2.5 text-sm font-semibold">
+          <div className="flex items-center gap-2.5">
+            <Eye className="w-5 h-5" />
+            <span>Spectator Mode (Read Only)</span>
+          </div>
+          <button
+            onClick={() => setIsSpectator(false)}
+            className="text-xs text-amber-950 bg-amber-500 hover:bg-amber-400 px-3 py-1.5 rounded-lg transition-all font-bold cursor-pointer"
+          >
+            Claim a Seat
+          </button>
         </div>
       )}
 
@@ -739,36 +872,67 @@ export default function VirtualTableTab({
         <div className="lg:col-span-4 space-y-4">
           
           {/* Active Action Panel */}
-          {isAuthenticated && liveGame.stage !== 'SHOWDOWN' && (
-            <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-5 space-y-4">
-              <h3 className="text-xs uppercase font-extrabold tracking-widest text-zinc-500 border-b border-white/5 pb-2.5">
-                Host Action Control
-              </h3>
+          {liveGame.stage !== 'SHOWDOWN' && (
+            isAuthenticated ? (
+              <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-5 space-y-4">
+                <h3 className="text-xs uppercase font-extrabold tracking-widest text-zinc-500 border-b border-white/5 pb-2.5">
+                  Host Action Control
+                </h3>
 
-              {actingPlayer ? (
-                <ActionControlPanel
-                  key={actingPlayer.id}
-                  actingPlayer={actingPlayer}
-                  minRaiseTo={minRaiseTo}
-                  totalLivePot={totalLivePot}
-                  handleAction={handleAction}
-                  liveGame={liveGame}
-                />
-              ) : isStreetSettled ? (
-                <div className="space-y-4 py-4 text-center">
-                  <p className="text-sm text-zinc-400 font-medium">Betting round settled!</p>
-                  <button
-                    onClick={handleProceedNextStreet}
-                    className="w-full bg-blue-500 hover:bg-blue-400 text-blue-950 font-bold py-3.5 px-6 rounded-2xl transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)] flex items-center justify-center gap-2 cursor-pointer text-sm"
-                  >
-                    Proceed to {liveGame.stage === 'PRE_FLOP' ? 'Flop' : liveGame.stage === 'FLOP' ? 'Turn' : liveGame.stage === 'TURN' ? 'River' : 'Showdown'}
-                  </button>
+                {actingPlayer ? (
+                  <ActionControlPanel
+                    key={actingPlayer.id}
+                    actingPlayer={actingPlayer}
+                    minRaiseTo={minRaiseTo}
+                    totalLivePot={totalLivePot}
+                    handleAction={handleAction}
+                    liveGame={liveGame}
+                  />
+                ) : isStreetSettled ? (
+                  <div className="space-y-4 py-4 text-center">
+                    <p className="text-sm text-zinc-400 font-medium">Betting round settled!</p>
+                    <button
+                      onClick={handleProceedNextStreet}
+                      className="w-full bg-blue-500 hover:bg-blue-400 text-blue-950 font-bold py-3.5 px-6 rounded-2xl transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)] flex items-center justify-center gap-2 cursor-pointer text-sm"
+                    >
+                      Proceed to {liveGame.stage === 'PRE_FLOP' ? 'Flop' : liveGame.stage === 'FLOP' ? 'Turn' : liveGame.stage === 'TURN' ? 'River' : 'Showdown'}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="py-6 text-center text-zinc-500 italic text-sm">
+                    Waiting on players...
+                  </div>
+                )}
+              </div>
+            ) : (
+              // Player Turn Control
+              currentPlayerId && actingPlayer && actingPlayer.id === currentPlayerId ? (
+                <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-5 space-y-4">
+                  <h3 className="text-xs uppercase font-extrabold tracking-widest text-zinc-500 border-b border-white/5 pb-2.5">
+                    Your Turn to Act
+                  </h3>
+                  <ActionControlPanel
+                    key={actingPlayer.id}
+                    actingPlayer={actingPlayer}
+                    minRaiseTo={minRaiseTo}
+                    totalLivePot={totalLivePot}
+                    handleAction={handleAction}
+                    liveGame={liveGame}
+                  />
                 </div>
               ) : (
-                <div className="py-6 text-center text-zinc-500 italic text-sm">
-                  Waiting on players...
+                // Player waiting turn indicator
+                <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-5 text-center py-6 text-zinc-500 italic text-sm">
+                  {actingPlayer ? `Waiting for ${actingPlayer.name} to act...` : isStreetSettled ? "Waiting for Host to advance street..." : "Waiting on players..."}
                 </div>
-              )}
+              )
+            )
+          )}
+
+          {/* Showdown Status for Players */}
+          {!isAuthenticated && liveGame.stage === 'SHOWDOWN' && (
+            <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-5 text-center py-6 text-zinc-500 italic text-sm">
+              Showdown in progress. Waiting for host to award the pot...
             </div>
           )}
 

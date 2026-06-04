@@ -116,6 +116,17 @@ export default function SettingsTab({
                     className="w-full bg-transparent p-2 text-white font-mono text-sm focus:outline-none text-right"
                   />
                 </div>
+                <div className="w-20 shrink-0 flex items-center bg-zinc-900 rounded-lg border border-white/5 px-2 focus-within:border-amber-500/50 transition-colors">
+                  <span className="text-zinc-500 text-[10px] font-bold mr-1">PIN</span>
+                  <input
+                    type="text"
+                    maxLength={4}
+                    placeholder="0000"
+                    value={p.pin ?? '0000'}
+                    onChange={e => handlePlayerChange(idx, 'pin', e.target.value)}
+                    className="w-full bg-transparent p-2 text-white font-mono text-sm focus:outline-none text-center"
+                  />
+                </div>
                 <button
                   onClick={() => removePlayer(idx)}
                   className="p-2 text-zinc-600 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors shrink-0"

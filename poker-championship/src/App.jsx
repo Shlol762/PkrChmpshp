@@ -37,6 +37,8 @@ export default function App() {
   const [liveGame, setLiveGame]   = useState(null);
   const [loading, setLoading]     = useState(true);
 
+  const [currentPlayerId, setCurrentPlayerId] = useState(() => localStorage.getItem('poker_player_id') || null);
+
   const [config, setConfig]               = useState(DEFAULT_CONFIG);
   const [settingsDraft, setSettingsDraft] = useState(DEFAULT_CONFIG);
 
@@ -161,7 +163,7 @@ export default function App() {
     const newId = Math.random().toString(36).substr(2, 4).toUpperCase();
     setSettingsDraft(prev => ({
       ...prev,
-      players: [...prev.players, { id: newId, name: 'New Player', startBalance: 8300 }]
+      players: [...prev.players, { id: newId, name: 'New Player', startBalance: 8300, pin: '0000' }]
     }));
   };
 
@@ -392,6 +394,8 @@ export default function App() {
             liveGame={liveGame}
             currentDay={currentDay}
             sessions={sessions}
+            currentPlayerId={currentPlayerId}
+            setCurrentPlayerId={setCurrentPlayerId}
           />
         )}
       </main>
