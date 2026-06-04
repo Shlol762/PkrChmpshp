@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { collection, onSnapshot, doc, setDoc, addDoc, updateDoc, deleteDoc, getDoc } from 'firebase/firestore';
-import { Trophy, CalendarDays, HandCoins, Settings, Crown, Lock, Unlock } from 'lucide-react';
+import { Trophy, CalendarDays, HandCoins, Settings, Crown, Lock, Unlock, Dices } from 'lucide-react';
 
 // Imports from our new modular files
 import { auth, db, safeAppId } from './firebase';
@@ -20,6 +20,7 @@ import LeaderboardTab from './views/LeaderboardTab';
 import SessionsTab from './views/SessionsTab';
 import LoansTab from './views/LoansTab';
 import SettingsTab from './views/SettingsTab';
+import VirtualTableTab from './views/VirtualTableTab';
 
 export default function App() {
   const [user, setUser]           = useState(null);
@@ -33,6 +34,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [sessions, setSessions]   = useState([]);
   const [loans, setLoans]         = useState([]);
+  const [liveGame, setLiveGame]   = useState(null);
   const [loading, setLoading]     = useState(true);
 
   const [config, setConfig]               = useState(DEFAULT_CONFIG);
@@ -78,6 +80,7 @@ export default function App() {
     const sessionsRef = collection(db, 'artifacts', safeAppId, 'public', 'data', 'sessions');
     const loansRef    = collection(db, 'artifacts', safeAppId, 'public', 'data', 'loans');
     const pinRef      = doc(db, 'artifacts', safeAppId, 'public', 'data', 'auth', 'pin');
+    const liveGameRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGame', 'main');
 
     // Fetch PIN
     const fetchPin = async () => {
@@ -121,7 +124,15 @@ export default function App() {
       setLoans(data);
     }, err => console.error('Loan fetch error:', err));
 
-    return () => { unsubConfig(); unsubSessions(); unsubLoans(); };
+    const unsubLiveGame = onSnapshot(liveGameRef, snap => {
+      if (snap.exists()) {
+        setLiveGame(snap.data());
+      } else {
+        setLiveGame(null);
+      }
+    }, err => console.error('Live game fetch error:', err));
+
+    return () => { unsubConfig(); unsubSessions(); unsubLoans(); unsubLiveGame(); };
   }, [user]);
 
   // Calculations derived from state (pure computations using utils)
@@ -267,10 +278,11 @@ export default function App() {
   }
 
   const navItems = [
-    { id: 'dashboard', icon: Trophy,       label: 'Leaderboard' },
-    { id: 'sessions',  icon: CalendarDays, label: 'Sessions' },
-    { id: 'loans',     icon: HandCoins,    label: 'Loans' },
-    { id: 'settings',  icon: Settings,     label: 'Settings' },
+    { id: 'dashboard',    icon: Trophy,       label: 'Leaderboard' },
+    { id: 'sessions',     icon: CalendarDays, label: 'Sessions' },
+    { id: 'loans',        icon: HandCoins,    label: 'Loans' },
+    { id: 'virtualTable', icon: Dices,        label: 'Virtual Table' },
+    { id: 'settings',     icon: Settings,     label: 'Settings' },
   ];
 
   return (
@@ -370,6 +382,16 @@ export default function App() {
             addPlayer={addPlayer}
             removePlayer={removePlayer}
             saveSettings={saveSettings}
+          />
+        )}
+
+        {activeTab === 'virtualTable' && (
+          <VirtualTableTab
+            isAuthenticated={isAuthenticated}
+            config={config}
+            liveGame={liveGame}
+            currentDay={currentDay}
+            sessions={sessions}
           />
         )}
       </main>
