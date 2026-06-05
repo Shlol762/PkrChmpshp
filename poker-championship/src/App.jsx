@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { collection, onSnapshot, doc, setDoc, addDoc, updateDoc, deleteDoc, getDoc } from 'firebase/firestore';
-import { Trophy, CalendarDays, HandCoins, Settings, Crown, Lock, Unlock, Dices } from 'lucide-react';
+import { Trophy, CalendarDays, HandCoins, Settings, Crown, Lock, Unlock, Dices, BookOpen } from 'lucide-react';
 
 // Imports from our new modular files
 import { auth, db, safeAppId } from './firebase';
@@ -21,6 +21,7 @@ import SessionsTab from './views/SessionsTab';
 import LoansTab from './views/LoansTab';
 import SettingsTab from './views/SettingsTab';
 import VirtualTableTab from './views/VirtualTableTab';
+import RulesTab from './views/RulesTab';
 
 export default function App() {
   const [user, setUser]           = useState(null);
@@ -284,6 +285,7 @@ export default function App() {
     { id: 'sessions',     icon: CalendarDays, label: 'Sessions' },
     { id: 'loans',        icon: HandCoins,    label: 'Loans' },
     { id: 'virtualTable', icon: Dices,        label: 'Virtual Table' },
+    { id: 'rules',        icon: BookOpen,     label: 'Rules' },
     { id: 'settings',     icon: Settings,     label: 'Settings' },
   ];
 
@@ -397,6 +399,10 @@ export default function App() {
             currentPlayerId={currentPlayerId}
             setCurrentPlayerId={setCurrentPlayerId}
           />
+        )}
+
+        {activeTab === 'rules' && (
+          <RulesTab />
         )}
       </main>
 
