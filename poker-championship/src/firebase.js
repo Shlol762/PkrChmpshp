@@ -3,12 +3,7 @@ import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
 const firebaseConfig = typeof window.__firebase_config !== 'undefined' ? JSON.parse(window.__firebase_config) : {
-  apiKey: "AIzaSyDNHughes_fwlOts8OUaXbVb1nQN9VUfcU",
-  authDomain: "pkrchmpshp.firebaseapp.com",
-  projectId: "pkrchmpshp",
-  storageBucket: "pkrchmpshp.firebasestorage.app",
-  messagingSenderId: "300564104729",
-  appId: "1:300564104729:web:90fd4a322050d38bcd0c88"
+   // Paste firebase database credentials here
 };
 
 export const app = initializeApp(firebaseConfig);
