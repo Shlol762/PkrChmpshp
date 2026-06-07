@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { signInWithCustomToken, signInAnonymously, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { collection, onSnapshot, doc, setDoc, addDoc, updateDoc, deleteDoc, getDoc } from 'firebase/firestore';
 import { Trophy, CalendarDays, HandCoins, Settings, Crown, Lock, Unlock, Dices, BookOpen } from 'lucide-react';
 
@@ -28,8 +28,6 @@ export default function App() {
   
   // App State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [systemPin, setSystemPin]             = useState(null);
-  const [isCheckingPin, setIsCheckingPin]     = useState(true);
   const [showPinModal, setShowPinModal]       = useState(false);
 
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -60,18 +58,20 @@ export default function App() {
 
   // ── Auth ──────────────────────────────────────────────────────────────────────
   useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (typeof window.__initial_auth_token !== 'undefined' && window.__initial_auth_token) {
-          await signInWithCustomToken(auth, window.__initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (err) { console.error('Auth error:', err); }
-    };
-
-    initAuth();
-    const unsub = onAuthStateChanged(auth, u => setUser(u));
+    const unsub = onAuthStateChanged(auth, async (u) => {
+      if (!u) {
+        try {
+          if (typeof window.__initial_auth_token !== 'undefined' && window.__initial_auth_token) {
+            await signInWithCustomToken(auth, window.__initial_auth_token);
+          } else {
+            await signInAnonymously(auth);
+          }
+        } catch (err) { console.error('Auth error:', err); }
+      } else {
+        setUser(u);
+        setIsAuthenticated(!u.isAnonymous);
+      }
+    });
     return () => unsub();
   }, []);
 
@@ -82,27 +82,7 @@ export default function App() {
     const configRef   = doc(db, 'artifacts', safeAppId, 'public', 'data', 'config', 'main');
     const sessionsRef = collection(db, 'artifacts', safeAppId, 'public', 'data', 'sessions');
     const loansRef    = collection(db, 'artifacts', safeAppId, 'public', 'data', 'loans');
-    const pinRef      = doc(db, 'artifacts', safeAppId, 'public', 'data', 'auth', 'pin');
     const liveGameRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGame', 'main');
-
-    // Fetch PIN
-    const fetchPin = async () => {
-      try {
-        const pinDoc = await getDoc(pinRef);
-        if (pinDoc.exists() && pinDoc.data().value) {
-          setSystemPin(pinDoc.data().value);
-        } else {
-          console.log("No PIN found in DB, defaulting to '0000'");
-          setSystemPin("0000"); 
-        }
-      } catch (error) {
-        console.error("Error fetching PIN:", error);
-        setSystemPin("0000"); // Fallback PIN on error
-      } finally {
-        setIsCheckingPin(false);
-      }
-    };
-    fetchPin();
 
     const unsubConfig = onSnapshot(configRef, snap => {
       if (snap.exists()) {
@@ -138,6 +118,35 @@ export default function App() {
     return () => { unsubConfig(); unsubSessions(); unsubLoans(); unsubLiveGame(); };
   }, [user]);
 
+  // Fetch private PINs when admin is authenticated
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const fetchPins = async () => {
+      try {
+        const pins = {};
+        for (const p of config.players) {
+          const pinDoc = await getDoc(doc(db, 'privateData', 'pins', 'players', p.id));
+          if (pinDoc.exists()) {
+            pins[p.id] = pinDoc.data().pin;
+          }
+        }
+        // Merge PINs into settingsDraft
+        setSettingsDraft(prev => {
+          const updatedPlayers = prev.players.map(p => ({
+            ...p,
+            pin: pins[p.id] || p.pin || '0000'
+          }));
+          return { ...prev, players: updatedPlayers };
+        });
+      } catch (err) {
+        console.error("Error fetching player PINs:", err);
+      }
+    };
+
+    fetchPins();
+  }, [isAuthenticated, config.players]);
+
   // Calculations derived from state (pure computations using utils)
   const playerStats = useMemo(() => {
     return calculatePlayerStats(sessions, loans, currentDay, config);
@@ -152,6 +161,24 @@ export default function App() {
   const nextPaydayIn    = config.paydayInterval - (currentDay % config.paydayInterval);
 
   // ── Handlers ──────────────────────────────────────────────────────────────────
+  const handleAdminLogin = async (email, password) => {
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+      return { success: true };
+    } catch (err) {
+      console.error('Admin login error:', err);
+      return { success: false, error: err.message };
+    }
+  };
+
+  const handleAdminLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (err) {
+      console.error('Admin logout error:', err);
+    }
+  };
+
   const handleConfigChange = (field, value) => setSettingsDraft(prev => ({ ...prev, [field]: Number(value) }));
   
   const handlePlayerChange = (index, field, value) => {
@@ -177,8 +204,30 @@ export default function App() {
 
   const saveSettings = async () => {
     if (!user) return;
-    try { await setDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'config', 'main'), settingsDraft); } 
-    catch (err) { console.error("Error saving config:", err); }
+    try {
+      // 1. Write the public config with PINs removed so players can't read them
+      const publicPlayers = settingsDraft.players.map(p => {
+        const { pin, ...publicData } = p;
+        return publicData;
+      });
+      const publicConfig = {
+        ...settingsDraft,
+        players: publicPlayers
+      };
+      await setDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'config', 'main'), publicConfig);
+
+      // 2. Write each player's PIN to the private collection
+      for (const p of settingsDraft.players) {
+        if (p.pin) {
+          const pinRef = doc(db, 'privateData', 'pins', 'players', p.id);
+          await setDoc(pinRef, { pin: p.pin });
+        }
+      }
+      alert("Settings saved successfully!");
+    } catch (err) {
+      console.error("Error saving config:", err);
+      alert("Failed to save settings.");
+    }
   };
 
   const openSessionModal = () => {
@@ -269,7 +318,7 @@ export default function App() {
 
   const getPlayerName = id => config.players.find(p => p.id === id)?.name || id;
 
-  if (loading || !user || isCheckingPin) {
+  if (loading || !user) {
     return (
       <div className="flex h-screen items-center justify-center bg-[#09090b] text-zinc-200">
         <div className="animate-pulse flex flex-col items-center">
@@ -327,7 +376,7 @@ export default function App() {
             
             {/* Admin Toggle */}
             <button
-              onClick={() => isAuthenticated ? setIsAuthenticated(false) : setShowPinModal(true)}
+              onClick={() => isAuthenticated ? handleAdminLogout() : setShowPinModal(true)}
               className={`p-2 rounded-xl border transition-all ${
                 isAuthenticated
                   ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20'
@@ -431,8 +480,7 @@ export default function App() {
       <PinModal
         isOpen={showPinModal}
         onClose={() => setShowPinModal(false)}
-        onLogin={() => setIsAuthenticated(true)}
-        systemPin={systemPin}
+        onLogin={handleAdminLogin}
       />
 
       <SessionModal

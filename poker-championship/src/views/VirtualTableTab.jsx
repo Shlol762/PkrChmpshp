@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { doc, setDoc, deleteDoc, addDoc, collection } from 'firebase/firestore';
+import { useState, useMemo, useEffect } from 'react';
+import { doc, setDoc, deleteDoc, addDoc, collection, onSnapshot } from 'firebase/firestore';
 import { db, safeAppId } from '../firebase';
 import {
   Trophy,
@@ -142,6 +142,61 @@ export default function VirtualTableTab({
       console.error("Error updating live game state:", err);
     }
   };
+
+  // Submit a turn action to the Drop-Box commands list (for non-host players)
+  const submitPlayerAction = async (actionType, payload = null) => {
+    if (!currentPlayerId) return;
+    const pin = localStorage.getItem('poker_player_pin') || '';
+    try {
+      const commandsRef = collection(db, 'artifacts', safeAppId, 'public', 'data', 'liveGameCommands');
+      await addDoc(commandsRef, {
+        playerId: currentPlayerId,
+        action: actionType,
+        payload: payload,
+        pin: pin,
+        timestamp: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error("Action submission error:", err);
+      alert("Failed to submit action. Please verify your seat PIN.");
+    }
+  };
+
+  // Click handler that switches between direct Host state updates and Player command submissions
+  const handleActionClick = async (actionType, payload = null) => {
+    if (isAuthenticated) {
+      await handleAction(actionType, payload);
+    } else {
+      await submitPlayerAction(actionType, payload);
+    }
+  };
+
+  // Host processor listener: processes commands from the player queue
+  useEffect(() => {
+    if (!isAuthenticated || !liveGame || !liveGame.active) return;
+
+    const commandsRef = collection(db, 'artifacts', safeAppId, 'public', 'data', 'liveGameCommands');
+    const unsub = onSnapshot(commandsRef, async (snap) => {
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // Process in timestamp order
+      docs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+      for (const cmd of docs) {
+        if (actingPlayer && cmd.playerId === actingPlayer.id) {
+          // Process the action using host authentication
+          await handleAction(cmd.action, cmd.payload);
+        }
+        // Delete the command document so it is only processed once
+        try {
+          await deleteDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGameCommands', cmd.id));
+        } catch (err) {
+          console.error("Error deleting command:", err);
+        }
+      }
+    });
+
+    return () => unsub();
+  }, [isAuthenticated, liveGame, actingPlayer]);
 
   // ── Actions ─────────────────────────────────────────────────────────────────
   
@@ -657,17 +712,26 @@ export default function VirtualTableTab({
             </div>
 
             <button
-              onClick={() => {
+              onClick={async () => {
                 if (!claimPlayerId) {
                   setClaimError("Please select a player.");
                   return;
                 }
-                const player = config.players.find(p => p.id === claimPlayerId);
-                const correctPin = player?.pin || '0000';
-                if (claimPin === correctPin) {
+                setClaimError("");
+                try {
+                  // Write a claim verification note to playerClaims
+                  const claimRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'playerClaims', claimPlayerId);
+                  await setDoc(claimRef, {
+                    playerId: claimPlayerId,
+                    pin: claimPin,
+                    timestamp: new Date().toISOString()
+                  });
+                  // If write succeeds, PIN is valid per database rules!
                   setCurrentPlayerId(claimPlayerId);
                   localStorage.setItem('poker_player_id', claimPlayerId);
-                } else {
+                  localStorage.setItem('poker_player_pin', claimPin);
+                } catch (err) {
+                  console.error("Verification error:", err);
                   setClaimError("Incorrect PIN. Please ask the host for your PIN.");
                 }
               }}
@@ -706,6 +770,7 @@ export default function VirtualTableTab({
               if (window.confirm("Are you sure you want to vacate this seat?")) {
                 setCurrentPlayerId(null);
                 localStorage.removeItem('poker_player_id');
+                localStorage.removeItem('poker_player_pin');
                 setClaimPlayerId('');
                 setClaimPin('');
               }
@@ -885,7 +950,7 @@ export default function VirtualTableTab({
                     actingPlayer={actingPlayer}
                     minRaiseTo={minRaiseTo}
                     totalLivePot={totalLivePot}
-                    handleAction={handleAction}
+                    handleAction={handleActionClick}
                     liveGame={liveGame}
                   />
                 ) : isStreetSettled ? (
@@ -916,7 +981,7 @@ export default function VirtualTableTab({
                     actingPlayer={actingPlayer}
                     minRaiseTo={minRaiseTo}
                     totalLivePot={totalLivePot}
-                    handleAction={handleAction}
+                    handleAction={handleActionClick}
                     liveGame={liveGame}
                   />
                 </div>

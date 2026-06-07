@@ -1,25 +1,8 @@
 export const DEFAULT_CONFIG = {
-  maxSystemNW: 200 * 8300,
+  maxSystemNW: 1660000, // Default fallback (e.g. 200 * 8300)
   salaryAmount: 3320,
   paydayInterval: 5,
-  players: [
-    { id: 'AD', name: 'Adi',      startBalance: 8300 },
-    { id: 'AV', name: 'Advik',    startBalance: 8300 },
-    { id: 'AK', name: 'Aniket',   startBalance: 8300 },
-    { id: 'AS', name: 'Anish',    startBalance: 8300 },
-    { id: 'AR', name: 'Anurag',   startBalance: 8300 },
-    { id: 'DH', name: 'Dhruv',    startBalance: 8300 },
-    { id: 'ET', name: 'Ethan',    startBalance: 8300 },
-    { id: 'GV', name: 'Govind',   startBalance: 8300 },
-    { id: 'LR', name: 'Leroy',    startBalance: 8300 },
-    { id: 'MT', name: 'Matha',    startBalance: 8300 },
-    { id: 'RD', name: 'Riddhi',   startBalance: 8300 },
-    { id: 'SK', name: 'Shlok',    startBalance: 8300 },
-    { id: 'SD', name: 'Sidharth', startBalance: 8300 },
-    { id: 'TN', name: 'Tanav',    startBalance: 8300 },
-    { id: 'VN', name: 'Vishnu',   startBalance: 8300 },
-    { id: 'VG', name: 'Vignesh',  startBalance: 8300 },
-  ]
+  players: [] // Kept empty so the application code is generic. New databases will start clean.
 };
 
 export function repaymentAmount(loan) {

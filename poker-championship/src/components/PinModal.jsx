@@ -1,23 +1,28 @@
 import { useState } from 'react';
-import { X, Lock, Unlock } from 'lucide-react';
+import { X, Lock, Unlock, Loader2 } from 'lucide-react';
 
 
-export default function PinModal({ isOpen, onClose, onLogin, systemPin }) {
-  const [pinInput, setPinInput] = useState('');
-  const [error, setError] = useState(false);
+export default function PinModal({ isOpen, onClose, onLogin }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
 
   if (!isOpen) return null;
 
-  const handlePinSubmit = (e) => {
+  const handleLoginSubmit = async (e) => {
     e.preventDefault();
-    if (pinInput === systemPin) {
-      onLogin();
-      setPinInput('');
+    setIsLoading(true);
+    setError('');
+    
+    const res = await onLogin(email, password);
+    setIsLoading(false);
+    if (res.success) {
+      setEmail('');
+      setPassword('');
       onClose();
     } else {
-      setError(true);
-      setPinInput('');
-      setTimeout(() => setError(false), 2000); // clear error after 2s
+      setError(res.error || 'Invalid credentials');
     }
   };
 
@@ -30,34 +35,51 @@ export default function PinModal({ isOpen, onClose, onLogin, systemPin }) {
         <div className="bg-gradient-to-br from-amber-400 to-orange-600 p-3 rounded-2xl shadow-[0_0_20px_rgba(245,158,11,0.2)] mb-6">
           <Lock className="h-8 w-8 text-white" />
         </div>
-        <h2 className="text-2xl font-bold text-white mb-2 text-center tracking-tight">Admin Access</h2>
-        <p className="text-zinc-500 text-sm mb-8 text-center">Enter PIN to unlock controls.</p>
+        <h2 className="text-2xl font-bold text-white mb-2 text-center tracking-tight">Admin Sign In</h2>
+        <p className="text-zinc-500 text-sm mb-6 text-center">Enter email & password to unlock controls.</p>
 
-        <form onSubmit={handlePinSubmit} className="w-full">
-          <div className="relative mb-6">
+        <form onSubmit={handleLoginSubmit} className="w-full space-y-4">
+          <div>
+            <label className="block text-[10px] uppercase font-bold text-zinc-500 mb-1.5">Email Address</label>
             <input
-              type="password"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              value={pinInput}
-              onChange={(e) => setPinInput(e.target.value)}
-              placeholder="••••"
-              className={`w-full bg-zinc-950 border rounded-xl p-4 text-center text-white font-mono text-2xl tracking-[0.5em] focus:outline-none transition-colors ${
-                error ? 'border-rose-500/50 bg-rose-500/5 focus:border-rose-500' : 'border-white/10 focus:border-amber-500'
-              }`}
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="admin@email.com"
+              className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-amber-500 transition-colors"
               autoFocus
             />
-            {error && (
-              <p className="absolute -bottom-6 left-0 right-0 text-center text-xs text-rose-400 font-semibold animate-in slide-in-from-top-1">
-                Incorrect PIN
-              </p>
-            )}
           </div>
+
+          <div className="relative">
+            <label className="block text-[10px] uppercase font-bold text-zinc-500 mb-1.5">Password</label>
+            <input
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-amber-500 transition-colors"
+            />
+          </div>
+
+          {error && (
+            <p className="text-center text-xs text-rose-400 font-semibold animate-in slide-in-from-top-1">
+              {error}
+            </p>
+          )}
+
           <button
             type="submit"
-            className="w-full py-3.5 rounded-xl font-bold bg-amber-500 text-amber-950 hover:bg-amber-400 transition-all shadow-[0_0_15px_rgba(245,158,11,0.15)] flex justify-center items-center gap-2"
+            disabled={isLoading}
+            className="w-full py-3.5 mt-2 rounded-xl font-bold bg-amber-500 text-amber-950 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-[0_0_15px_rgba(245,158,11,0.15)] flex justify-center items-center gap-2"
           >
-            Unlock <Unlock className="w-4 h-4" />
+            {isLoading ? (
+              <>Signing In <Loader2 className="w-4 h-4 animate-spin" /></>
+            ) : (
+              <>Unlock <Unlock className="w-4 h-4" /></>
+            )}
           </button>
         </form>
       </div>

@@ -1,0 +1,56 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper: Checks if the user is signed in as an Admin (with email/password)
+    // Anonymous users do not have an email address in their token.
+    function isAdmin() {
+      return request.auth != null && request.auth.token.email != null;
+    }
+
+    // Helper: Retrieve the secret PIN for a player
+    function getPlayerPin(playerId) {
+      return get(/databases/$(database)/documents/privateData/pins/players/$(playerId)).data.pin;
+    }
+
+    // 1. Private data (PINs) - Admin only
+    match /privateData/{document=**} {
+      allow read, write: if isAdmin();
+    }
+
+    // 2. Configurations & Ledgers (Read by everyone, written by Admin only)
+    match /artifacts/{appId}/public/data/config/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /artifacts/{appId}/public/data/sessions/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /artifacts/{appId}/public/data/loans/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 3. Live Game State (Read by everyone, written by Admin only)
+    match /artifacts/{appId}/public/data/liveGame/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 4. Seat Claims verification (Anyone can verify a claim, but ONLY if the PIN matches)
+    match /artifacts/{appId}/public/data/playerClaims/{playerId} {
+      allow read, delete: if isAdmin();
+      allow create, update: if request.auth != null 
+                            && request.resource.data.pin == getPlayerPin(playerId);
+    }
+
+    // 5. Live Game Commands (Anyone can submit a turn action, but ONLY if the PIN matches)
+    match /artifacts/{appId}/public/data/liveGameCommands/{commandId} {
+      allow read, delete: if isAdmin();
+      allow create: if request.auth != null 
+                    && request.resource.data.playerId != null
+                    && request.resource.data.pin == getPlayerPin(request.resource.data.playerId);
+    }
+  }
+}
