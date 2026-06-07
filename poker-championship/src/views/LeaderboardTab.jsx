@@ -90,11 +90,18 @@ export default function LeaderboardTab({
                           <Wallet className="w-3 h-3"/> {stat.currentTableBalance.toLocaleString()}
                         </span>
                         {(stat.lentOut > 0 || stat.borrowed > 0) && (
-                          <span className="flex items-center gap-1" title="Net Loans">
-                            <HandCoins className="w-3 h-3"/> 
-                            <span className={stat.lentOut > stat.borrowed ? 'text-emerald-500/80' : 'text-rose-500/80'}>
-                              {stat.lentOut > stat.borrowed ? '+' : ''}{(stat.lentOut - stat.borrowed).toLocaleString()}
+                          <span className="flex items-center gap-1.5" title="Net Loans (Principal & Interest)">
+                            <HandCoins className="w-3 h-3 text-zinc-500"/> 
+                            <span className={stat.lentOutPrincipal > stat.borrowedPrincipal ? 'text-emerald-500/80 font-semibold' : 'text-rose-500/80 font-semibold'}>
+                              {stat.lentOutPrincipal > stat.borrowedPrincipal ? '+' : ''}
+                              {(stat.lentOutPrincipal - stat.borrowedPrincipal).toLocaleString()}
                             </span>
+                            {(stat.lentOutInterest > 0 || stat.borrowedInterest > 0) && (
+                              <span className={`text-[10px] font-semibold ${stat.lentOutInterest > stat.borrowedInterest ? 'text-emerald-500/60' : 'text-rose-500/60'}`}>
+                                ({stat.lentOutInterest > stat.borrowedInterest ? '+' : ''}
+                                {(stat.lentOutInterest - stat.borrowedInterest).toLocaleString()} int)
+                              </span>
+                            )}
                           </span>
                         )}
                       </div>

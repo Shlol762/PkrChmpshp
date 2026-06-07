@@ -279,11 +279,31 @@ export default function App() {
   const saveLoan = async () => {
     if (!user || !loanDraft.borrower || !loanDraft.lender || loanDraft.amount <= 0) return;
     try {
+      // 1. Add the loan document
       await addDoc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'loans'), {
         ...loanDraft, status: 'active', recordedAt: new Date().toISOString(), recordedBy: user.uid,
       });
+
+      // 2. Immediately adjust physical table chips in the latest session
+      if (sessions.length > 0) {
+        const latestSession = sessions[0];
+        const newBalances = { ...latestSession.balances };
+        const principal = Number(loanDraft.amount);
+
+        const borrowerBal = newBalances[loanDraft.borrower] ?? Number(config.players.find(p => p.id === loanDraft.borrower)?.startBalance || 0);
+        const lenderBal   = newBalances[loanDraft.lender] ?? Number(config.players.find(p => p.id === loanDraft.lender)?.startBalance || 0);
+
+        newBalances[loanDraft.borrower] = borrowerBal + principal;
+        newBalances[loanDraft.lender]   = lenderBal - principal;
+
+        await updateDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'sessions', latestSession.id), { balances: newBalances });
+      }
+
       setShowLoanModal(false);
-    } catch (err) { console.error('Error saving loan:', err); }
+    } catch (err) {
+      console.error('Error saving loan:', err);
+      alert("Failed to issue loan.");
+    }
   };
 
   const toggleLoanStatus = async (loan) => {

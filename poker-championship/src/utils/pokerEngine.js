@@ -46,24 +46,38 @@ export function calculatePlayerStats(sessions, loans, currentDay, config) {
     const expectedBreakEven = Number(player.startBalance) + totalSalaryPerPlayer;
     const tablePL = currentTableBalance - expectedBreakEven;
 
-    let lentOut  = 0;
-    let borrowed = 0;
+    let lentOutPrincipal  = 0;
+    let lentOutInterest   = 0;
+    let borrowedPrincipal = 0;
+    let borrowedInterest  = 0;
+
     loans.forEach(loan => {
       if (loan.status !== 'active') return;
-      const repay = repaymentAmount(loan);
-      if (loan.lender   === player.id) lentOut  += repay;
-      if (loan.borrower === player.id) borrowed += repay;
+      const principal = Number(loan.amount);
+      const interest = repaymentAmount(loan) - principal;
+      if (loan.lender === player.id) {
+        lentOutPrincipal += principal;
+        lentOutInterest += interest;
+      }
+      if (loan.borrower === player.id) {
+        borrowedPrincipal += principal;
+        borrowedInterest += interest;
+      }
     });
 
-    const netWorth = currentTableBalance + lentOut - borrowed;
+    const netWorth = currentTableBalance + (lentOutPrincipal + lentOutInterest) - (borrowedPrincipal + borrowedInterest);
 
     return {
       ...player,
       currentTableBalance,
       tablePL,
       salary: totalSalaryPerPlayer,
-      lentOut,
-      borrowed,
+      lentOutPrincipal,
+      lentOutInterest,
+      borrowedPrincipal,
+      borrowedInterest,
+      lentOut: lentOutPrincipal + lentOutInterest,
+      borrowed: borrowedPrincipal + borrowedInterest,
       netWorth
     };
   }).sort((a, b) => b.netWorth - a.netWorth);

@@ -75,7 +75,10 @@ export default function LoansTab({
 
               <div className="flex justify-between items-end mt-auto pt-2">
                 <div>
-                  <div className="text-xs text-zinc-500 font-medium mb-1">Repayment ({loan.interest}%)</div>
+                  <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider mb-1">
+                    {Number(loan.amount).toLocaleString()} @ {loan.interest}% (+{(repay - Number(loan.amount)).toLocaleString()})
+                  </div>
+                  <div className="text-xs text-zinc-500 font-medium mb-0.5">Owed Repayment</div>
                   <div className="text-xl font-bold text-white tabular-nums">{repay.toLocaleString()}</div>
                 </div>
                 <div className={`text-xs font-medium text-right ${isOverdue ? 'text-rose-400' : 'text-zinc-400'}`}>
