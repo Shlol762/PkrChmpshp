@@ -77,15 +77,15 @@ export default function LeaderboardTab({
               <div key={stat.id} className={`group relative border rounded-2xl p-4 transition-all duration-300 ${rowClass}`}>
                 <div className="flex items-center justify-between">
                   
-                  <div className="flex items-center gap-4">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm border ${badgeClass}`}>
+                  <div className="flex items-start gap-4">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm border ${badgeClass} shrink-0 mt-0.5`}>
                       {index + 1}
                     </div>
                     <div>
                       <h3 className={`text-base font-semibold ${index === 0 ? 'text-amber-400' : 'text-zinc-100'}`}>
                         {stat.name}
                       </h3>
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500 mt-0.5 font-medium">
+                      <div className="flex items-center gap-3 text-xs text-zinc-500 mt-0.5 font-medium">
                         <span className="flex items-center gap-1" title="Table Balance">
                           <Wallet className="w-3 h-3"/> {stat.currentTableBalance.toLocaleString()}
                         </span>
@@ -97,11 +97,9 @@ export default function LeaderboardTab({
                               {(stat.lentOutPrincipal - stat.borrowedPrincipal).toLocaleString()}
                             </span>
                             {(stat.lentOutInterest > 0 || stat.borrowedInterest > 0) && (
-                              <span 
-                                className={`text-[10px] font-semibold opacity-75 ${stat.lentOutInterest > stat.borrowedInterest ? 'text-emerald-500/80' : 'text-rose-500/80'}`}
-                                title={`${(stat.lentOutInterest - stat.borrowedInterest).toLocaleString()} Interest`}
-                              >
-                                ({stat.lentOutInterest > stat.borrowedInterest ? '+' : ''}{(stat.lentOutInterest - stat.borrowedInterest).toLocaleString()})
+                              <span className={`text-[10px] font-semibold ${stat.lentOutInterest > stat.borrowedInterest ? 'text-emerald-500/60' : 'text-rose-500/60'}`}>
+                                ({stat.lentOutInterest > stat.borrowedInterest ? '+' : ''}
+                                {(stat.lentOutInterest - stat.borrowedInterest).toLocaleString()} int)
                               </span>
                             )}
                           </span>
