@@ -85,7 +85,7 @@ export default function LeaderboardTab({
                       <h3 className={`text-base font-semibold ${index === 0 ? 'text-amber-400' : 'text-zinc-100'}`}>
                         {stat.name}
                       </h3>
-                      <div className="flex items-center gap-3 text-xs text-zinc-500 mt-0.5 font-medium">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500 mt-0.5 font-medium">
                         <span className="flex items-center gap-1" title="Table Balance">
                           <Wallet className="w-3 h-3"/> {stat.currentTableBalance.toLocaleString()}
                         </span>
@@ -97,9 +97,11 @@ export default function LeaderboardTab({
                               {(stat.lentOutPrincipal - stat.borrowedPrincipal).toLocaleString()}
                             </span>
                             {(stat.lentOutInterest > 0 || stat.borrowedInterest > 0) && (
-                              <span className={`text-[10px] font-semibold ${stat.lentOutInterest > stat.borrowedInterest ? 'text-emerald-500/60' : 'text-rose-500/60'}`}>
-                                ({stat.lentOutInterest > stat.borrowedInterest ? '+' : ''}
-                                {(stat.lentOutInterest - stat.borrowedInterest).toLocaleString()} int)
+                              <span 
+                                className={`text-[10px] font-semibold opacity-75 ${stat.lentOutInterest > stat.borrowedInterest ? 'text-emerald-500/80' : 'text-rose-500/80'}`}
+                                title={`${(stat.lentOutInterest - stat.borrowedInterest).toLocaleString()} Interest`}
+                              >
+                                ({stat.lentOutInterest > stat.borrowedInterest ? '+' : ''}{(stat.lentOutInterest - stat.borrowedInterest).toLocaleString()})
                               </span>
                             )}
                           </span>
