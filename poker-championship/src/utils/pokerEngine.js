@@ -1,6 +1,7 @@
 export const DEFAULT_CONFIG = {
   maxSystemNW: 0,
-  salaryAmount: 0,
+  paydayMax: 0,
+  paydayThreshold: 1000,
   paydayInterval: 1, // Default to 1 to prevent division by zero
   players: [] // Kept empty so the application code is generic. New databases will start clean.
 };
@@ -9,46 +10,91 @@ export function repaymentAmount(loan) {
   return Math.round(Number(loan.amount) * (1 + Number(loan.interest || 0) / 100));
 }
 
-export function getSystemStateAtDay(dayNumber, config) {
-  let totalSalaryPerPlayer = 0;
-  const initialChipPool = config.players.reduce((sum, p) => sum + Number(p.startBalance), 0);
-  let amountInCirculation = initialChipPool;
+export function calculatePaydays(dayNumber, config, rawBalances, loans) {
+  // Check if it's a payday
+  if (!config.paydayInterval || config.paydayInterval <= 0) return {};
+  
+  // Triggered at the end of the (N-1)th day's session
+  const isPayday = Number(dayNumber) > 0 && (Number(dayNumber) + 1) % config.paydayInterval === 0;
 
-  if (!config.paydayInterval || config.paydayInterval <= 0) {
-    return { totalSalaryPerPlayer, amountInCirculation };
+  if (!isPayday) return {};
+
+  const paydays = {};
+  let totalCirculation = 0;
+  const netWorths = {};
+  
+  config.players.forEach(p => {
+    let lentOut = 0;
+    let borrowed = 0;
+    loans.forEach(loan => {
+      if (loan.status !== 'active') return;
+      const principal = Number(loan.amount);
+      const interest = repaymentAmount(loan) - principal;
+      if (loan.lender === p.id) lentOut += (principal + interest);
+      if (loan.borrower === p.id) borrowed += (principal + interest);
+    });
+    
+    const balance = Number(rawBalances[p.id] || 0);
+    const nw = balance + lentOut - borrowed;
+    netWorths[p.id] = nw;
+    totalCirculation += nw;
+  });
+
+  if (config.maxSystemNW > 0 && totalCirculation >= config.maxSystemNW) {
+    return {};
   }
 
-  const numPaydays = Math.floor(dayNumber / config.paydayInterval);
-
-  for (let i = 0; i < numPaydays; i++) {
-    const paydayCost = config.players.length * config.salaryAmount;
-    if (amountInCirculation + paydayCost <= config.maxSystemNW) {
-      totalSalaryPerPlayer += config.salaryAmount;
-      amountInCirculation += paydayCost;
-    } else if (amountInCirculation < config.maxSystemNW) {
-      const remaining = config.maxSystemNW - amountInCirculation;
-      const partialSalary = Math.floor(remaining / config.players.length);
-      totalSalaryPerPlayer += partialSalary;
-      amountInCirculation += partialSalary * config.players.length;
-      break;
-    } else {
-      break;
+  let projectedCirculation = totalCirculation;
+  
+  config.players.forEach(p => {
+    const nw = netWorths[p.id];
+    let amt = 0;
+    const threshold = config.paydayThreshold ?? 1000;
+    const pMax = config.paydayMax ?? 0;
+    
+    if (nw < threshold && pMax > 0) {
+      amt = Math.min(pMax, threshold - nw);
     }
+    paydays[p.id] = amt;
+  });
+
+  const totalInjection = Object.values(paydays).reduce((sum, v) => sum + v, 0);
+  if (config.maxSystemNW > 0 && projectedCirculation + totalInjection > config.maxSystemNW) {
+     const available = config.maxSystemNW - projectedCirculation;
+     if (available <= 0) {
+       for (const pid in paydays) paydays[pid] = 0;
+     } else {
+       const scale = available / totalInjection;
+       for (const pid in paydays) paydays[pid] = Math.floor(paydays[pid] * scale);
+     }
   }
-  return { totalSalaryPerPlayer, amountInCirculation };
+
+  return paydays;
 }
 
 export function calculatePlayerStats(sessions, loans, currentDay, config) {
   const latestSession = sessions.length > 0 ? sessions[0] : null;
-  const { totalSalaryPerPlayer } = getSystemStateAtDay(currentDay, config);
+
+  const totalPaydays = {};
+  config.players.forEach(p => { totalPaydays[p.id] = 0; });
+
+  sessions.forEach(session => {
+    if (session.paydaysDistributed) {
+      for (const [pid, amt] of Object.entries(session.paydaysDistributed)) {
+        if (totalPaydays[pid] !== undefined) {
+          totalPaydays[pid] += Number(amt || 0);
+        }
+      }
+    }
+  });
 
   return config.players.map(player => {
     const currentTableBalance =
       latestSession?.balances?.[player.id] !== undefined
         ? Number(latestSession.balances[player.id])
-        : Number(player.startBalance);
+        : Number(player.startBalance || 0);
 
-    const expectedBreakEven = Number(player.startBalance) + totalSalaryPerPlayer;
+    const expectedBreakEven = Number(player.startBalance || 0) + totalPaydays[player.id];
     const tablePL = currentTableBalance - expectedBreakEven;
 
     let lentOutPrincipal  = 0;
@@ -76,7 +122,7 @@ export function calculatePlayerStats(sessions, loans, currentDay, config) {
       ...player,
       currentTableBalance,
       tablePL,
-      salary: totalSalaryPerPlayer,
+      salary: totalPaydays[player.id], 
       lentOutPrincipal,
       lentOutInterest,
       borrowedPrincipal,
@@ -85,5 +131,14 @@ export function calculatePlayerStats(sessions, loans, currentDay, config) {
       borrowed: borrowedPrincipal + borrowedInterest,
       netWorth
     };
-  }).sort((a, b) => b.netWorth - a.netWorth);
+  }).sort((a, b) => {
+    if (b.netWorth !== a.netWorth) {
+      return b.netWorth - a.netWorth;
+    }
+    const aBaseline = Number(a.startBalance || 0) + (a.salary || 0);
+    const bBaseline = Number(b.startBalance || 0) + (b.salary || 0);
+    const aPct = aBaseline === 0 ? 0 : a.tablePL / aBaseline;
+    const bPct = bBaseline === 0 ? 0 : b.tablePL / bBaseline;
+    return bPct - aPct;
+  });
 }

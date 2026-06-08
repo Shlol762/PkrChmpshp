@@ -60,11 +60,20 @@ export default function SettingsTab({
               />
             </div>
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">Payday Salary Amount</label>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">PayDayMAX Amount</label>
               <input
                 type="number"
-                value={settingsDraft.salaryAmount}
-                onChange={e => handleConfigChange('salaryAmount', e.target.value)}
+                value={settingsDraft.paydayMax ?? 0}
+                onChange={e => handleConfigChange('paydayMax', e.target.value)}
+                className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white font-mono focus:outline-none focus:border-blue-500 transition-colors"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">PayDay Threshold</label>
+              <input
+                type="number"
+                value={settingsDraft.paydayThreshold ?? 1000}
+                onChange={e => handleConfigChange('paydayThreshold', e.target.value)}
                 className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white font-mono focus:outline-none focus:border-blue-500 transition-colors"
               />
             </div>
