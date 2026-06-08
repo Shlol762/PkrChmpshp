@@ -1,7 +1,7 @@
 export const DEFAULT_CONFIG = {
-  maxSystemNW: 1660000, // Default fallback (e.g. 200 * 8300)
-  salaryAmount: 3320,
-  paydayInterval: 5,
+  maxSystemNW: 0,
+  salaryAmount: 0,
+  paydayInterval: 1, // Default to 1 to prevent division by zero
   players: [] // Kept empty so the application code is generic. New databases will start clean.
 };
 
@@ -13,6 +13,11 @@ export function getSystemStateAtDay(dayNumber, config) {
   let totalSalaryPerPlayer = 0;
   const initialChipPool = config.players.reduce((sum, p) => sum + Number(p.startBalance), 0);
   let amountInCirculation = initialChipPool;
+
+  if (!config.paydayInterval || config.paydayInterval <= 0) {
+    return { totalSalaryPerPlayer, amountInCirculation };
+  }
+
   const numPaydays = Math.floor(dayNumber / config.paydayInterval);
 
   for (let i = 0; i < numPaydays; i++) {

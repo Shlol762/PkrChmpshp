@@ -49,7 +49,7 @@ export default function VirtualTableTab({
     const salaryBump = nextSalary - currentSalary;
 
     return config.players.reduce((acc, p) => {
-      const lastKnownBalance = latestSession?.balances?.[p.id] ?? Number(p.startBalance || 8300);
+      const lastKnownBalance = latestSession?.balances?.[p.id] ?? Number(p.startBalance || 0);
       acc[p.id] = Number(lastKnownBalance) + salaryBump;
       return acc;
     }, {});
@@ -206,7 +206,7 @@ export default function VirtualTableTab({
       .map(p => ({
         id: p.id,
         name: p.name,
-        stack: Number(startingStacks[p.id] || 8300),
+        stack: Number(startingStacks[p.id] || 0),
         currentBet: 0,
         totalHandInvestment: 0,
         folded: false,
@@ -595,7 +595,7 @@ export default function VirtualTableTab({
                       <span className="text-sm font-medium text-zinc-300">{p.name}</span>
                       <input
                         type="number"
-                        value={startingStacks[p.id] ?? 8300}
+                        value={startingStacks[p.id] ?? 0}
                         onChange={(e) => setStartingStacks(prev => ({ ...prev, [p.id]: Number(e.target.value) }))}
                         className="bg-zinc-900 border border-white/10 rounded-lg py-1.5 px-3 text-right text-sm text-zinc-200 w-24 font-mono font-semibold focus:outline-none focus:border-amber-500/50"
                       />
