@@ -8,7 +8,7 @@ import { auth, db, safeAppId } from './firebase';
 import {
   DEFAULT_CONFIG,
   repaymentAmount,
-  getSystemStateAtDay,
+  calculatePaydays,
   calculatePlayerStats
 } from './utils/pokerEngine';
 
@@ -47,6 +47,7 @@ export default function App() {
   }, [sessions]);
 
   const [showSessionModal, setShowSessionModal] = useState(false);
+  const [editingSessionId, setEditingSessionId] = useState(null);
   const [sessionDay, setSessionDay]             = useState(1);
   const [sessionDraft, setSessionDraft]         = useState({});
 
@@ -157,8 +158,15 @@ export default function App() {
   }, [playerStats]);
 
   const salaryPerPlayer = playerStats[0]?.salary || 0;
-  const totalPaydays    = Math.floor(currentDay / config.paydayInterval);
-  const nextPaydayIn    = config.paydayInterval - (currentDay % config.paydayInterval);
+  
+  let totalPaydays = 0;
+  sessions.forEach(s => {
+    if (s.paydaysDistributed && Object.keys(s.paydaysDistributed).length > 0) {
+      totalPaydays++;
+    }
+  });
+
+  const nextPaydayIn = config.paydayInterval - ((currentDay + 1) % config.paydayInterval);
 
   // ── Handlers ──────────────────────────────────────────────────────────────────
   const handleAdminLogin = async (email, password) => {
@@ -230,21 +238,31 @@ export default function App() {
     }
   };
 
-  const openSessionModal = () => {
-    const latestSession = sessions.length > 0 ? sessions[0] : null;
-    const nextDay = currentDay + 1;
-    const currentState = getSystemStateAtDay(currentDay, config);
-    const nextState = getSystemStateAtDay(nextDay, config);
-    const salaryBump = nextState.totalSalaryPerPlayer - currentState.totalSalaryPerPlayer;
+  const openSessionModal = (sessionToEdit = null) => {
+    if (sessionToEdit && typeof sessionToEdit === 'object' && sessionToEdit.id) {
+      setEditingSessionId(sessionToEdit.id);
+      setSessionDay(sessionToEdit.dayNumber);
+      const draft = {};
+      config.players.forEach(p => {
+        const finalBal = Number(sessionToEdit.balances?.[p.id] || 0);
+        const payday = Number(sessionToEdit.paydaysDistributed?.[p.id] || 0);
+        draft[p.id] = finalBal - payday;
+      });
+      setSessionDraft(draft);
+    } else {
+      setEditingSessionId(null);
+      const latestSession = sessions.length > 0 ? sessions[0] : null;
+      const nextDay = currentDay + 1;
 
-    const draft = {};
-    config.players.forEach(p => {
-      const lastKnownBalance = latestSession?.balances?.[p.id] ?? Number(p.startBalance);
-      draft[p.id] = lastKnownBalance + salaryBump;
-    });
+      const draft = {};
+      config.players.forEach(p => {
+        const lastKnownBalance = latestSession?.balances?.[p.id] ?? Number(p.startBalance || 0);
+        draft[p.id] = lastKnownBalance;
+      });
 
-    setSessionDraft(draft);
-    setSessionDay(nextDay);
+      setSessionDraft(draft);
+      setSessionDay(nextDay);
+    }
     setShowSessionModal(true);
   };
 
@@ -255,12 +273,30 @@ export default function App() {
   const saveSession = async () => {
     if (!user) return;
     try {
-      await addDoc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'sessions'), {
-        dayNumber:   Number(sessionDay),
-        balances:    sessionDraft,
-        recordedAt:  new Date().toISOString(),
-        recordedBy:  user.uid,
+      const paydaysToDistribute = calculatePaydays(Number(sessionDay), config, sessionDraft, loans);
+      
+      const finalBalances = {};
+      config.players.forEach(p => {
+        finalBalances[p.id] = (Number(sessionDraft[p.id]) || 0) + (paydaysToDistribute[p.id] || 0);
       });
+
+      if (editingSessionId) {
+        await setDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'sessions', editingSessionId), {
+          dayNumber:   Number(sessionDay),
+          balances:    finalBalances,
+          paydaysDistributed: paydaysToDistribute,
+          recordedAt:  new Date().toISOString(),
+          recordedBy:  user.uid,
+        }, { merge: true });
+      } else {
+        await addDoc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'sessions'), {
+          dayNumber:   Number(sessionDay),
+          balances:    finalBalances,
+          paydaysDistributed: paydaysToDistribute,
+          recordedAt:  new Date().toISOString(),
+          recordedBy:  user.uid,
+        });
+      }
       setShowSessionModal(false);
     } catch (err) { console.error('Error saving session:', err); }
   };
@@ -513,6 +549,7 @@ export default function App() {
         saveSession={saveSession}
         config={config}
         sessions={sessions}
+        loans={loans}
       />
 
       <LoanModal
