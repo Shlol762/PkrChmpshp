@@ -1,6 +1,5 @@
 import { Wallet, Banknote, Clock, TrendingUp, TrendingDown, HandCoins } from 'lucide-react';
 
-
 export default function LeaderboardTab({
   actualSystemNetWorth,
   config,
@@ -44,9 +43,9 @@ export default function LeaderboardTab({
           </div>
           <div className="flex items-baseline gap-2">
             <span className="text-2xl font-bold text-white">
-              {actualSystemNetWorth >= config.maxSystemNW ? 'Maxed Out' : `Day ${currentDay + nextPaydayIn}`}
+              {config.maxSystemNW > 0 && actualSystemNetWorth >= config.maxSystemNW ? 'Maxed Out' : `Day ${currentDay + nextPaydayIn}`}
             </span>
-            {actualSystemNetWorth < config.maxSystemNW && (
+            {(!config.maxSystemNW || actualSystemNetWorth < config.maxSystemNW) && (
               <span className="text-xs text-zinc-500">(in {nextPaydayIn} days)</span>
             )}
           </div>
@@ -60,31 +59,46 @@ export default function LeaderboardTab({
           <span className="text-xs text-zinc-500 uppercase tracking-widest font-semibold">Net Worth</span>
         </div>
         
-        <div className="space-y-3">
-          {playerStats.map((stat, index) => {
-            const isTop3 = index < 3;
-            const rankColors = [
-              'bg-amber-400 text-amber-950 shadow-[0_0_15px_rgba(245,158,11,0.2)] border-amber-400/50',
-              'bg-zinc-300 text-zinc-900 shadow-[0_0_15px_rgba(212,212,216,0.1)] border-zinc-300/50',
-              'bg-orange-700 text-orange-100 shadow-[0_0_15px_rgba(194,65,12,0.2)] border-orange-700/50'
-            ];
-            const badgeClass = isTop3 ? rankColors[index] : 'bg-zinc-800 text-zinc-400 border-white/5';
-            const rowClass = index === 0 
-              ? 'bg-gradient-to-r from-amber-500/10 to-zinc-900/40 border-amber-500/20' 
-              : 'bg-zinc-900/40 border-white/5 hover:bg-zinc-800/40';
+        <div className="space-y-2">
+          {(() => {
+            let currentDisplayRank = 1;
+            return playerStats.map((stat, index) => {
+              if (index > 0) {
+                const prevStat = playerStats[index - 1];
+                const prevBaseline = Number(prevStat.startBalance || 0) + (prevStat.salary || 0);
+                const currBaseline = Number(stat.startBalance || 0) + (stat.salary || 0);
+                
+                const prevPct = prevBaseline === 0 ? 0 : prevStat.tablePL / prevBaseline;
+                const currPct = currBaseline === 0 ? 0 : stat.tablePL / currBaseline;
 
-            return (
-              <div key={stat.id} className={`group relative border rounded-2xl p-4 transition-all duration-300 ${rowClass}`}>
-                <div className="flex items-center justify-between">
-                  
-                  <div className="flex items-start gap-4">
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm border ${badgeClass} shrink-0 mt-0.5`}>
-                      {index + 1}
-                    </div>
-                    <div>
-                      <h3 className={`text-base font-semibold ${index === 0 ? 'text-amber-400' : 'text-zinc-100'}`}>
-                        {stat.name}
-                      </h3>
+                if (stat.netWorth !== prevStat.netWorth || currPct !== prevPct) {
+                  currentDisplayRank = index + 1;
+                }
+              }
+
+              const isTop3 = currentDisplayRank <= 3;
+              const rankColors = [
+                'bg-amber-400 text-amber-950 shadow-[0_0_15px_rgba(245,158,11,0.2)] border-amber-400/50',
+                'bg-zinc-300 text-zinc-900 shadow-[0_0_15px_rgba(212,212,216,0.1)] border-zinc-300/50',
+                'bg-orange-700 text-orange-100 shadow-[0_0_15px_rgba(194,65,12,0.2)] border-orange-700/50'
+              ];
+              const badgeClass = isTop3 ? rankColors[currentDisplayRank - 1] : 'bg-zinc-800 text-zinc-400 border-white/5';
+              const rowClass = currentDisplayRank === 1 
+                ? 'bg-gradient-to-r from-amber-500/10 to-zinc-900/40 border-amber-500/20' 
+                : 'bg-zinc-900/40 border-white/5 hover:bg-zinc-800/40';
+
+              return (
+                <div key={stat.id} className={`group relative border rounded-2xl py-2.5 px-3 sm:px-4 transition-all duration-300 ${rowClass}`}>
+                  <div className="flex items-center justify-between">
+                    
+                    <div className="flex items-start gap-3">
+                      <div className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs border ${badgeClass} shrink-0 mt-0.5`}>
+                        {currentDisplayRank}
+                      </div>
+                      <div>
+                        <h3 className={`text-sm font-bold ${currentDisplayRank === 1 ? 'text-amber-400' : 'text-zinc-100'}`}>
+                          {stat.name}
+                        </h3>
                       <div className="flex items-center gap-3 text-xs text-zinc-500 mt-0.5 font-medium">
                         <span className="flex items-center gap-1" title="Table Balance">
                           <Wallet className="w-3 h-3"/> {stat.currentTableBalance.toLocaleString()}
@@ -109,19 +123,35 @@ export default function LeaderboardTab({
                   </div>
 
                   <div className="text-right flex flex-col items-end">
-                    <div className="text-xl sm:text-2xl font-bold text-white tabular-nums tracking-tight">
+                    <div className="text-xl sm:text-2xl font-bold text-white tabular-nums tracking-tight leading-none mb-1">
                       {stat.netWorth.toLocaleString()}
                     </div>
-                    <div className={`flex items-center gap-0.5 text-[11px] font-semibold tracking-wide uppercase mt-0.5 ${stat.tablePL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {stat.tablePL >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                      {Math.abs(stat.tablePL).toLocaleString()} P/L
+                    <div className="flex flex-col items-end gap-0">
+                      <div className={`py-0.5 flex items-center gap-1 text-xs font-semibold tracking-wide uppercase ${stat.tablePL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {stat.tablePL >= 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
+                        {(() => {
+                          const baseline = Number(stat.startBalance || 0) + Number(stat.salary || 0);
+                          const pct = baseline === 0 ? 0 : (Math.abs(stat.tablePL) / baseline) * 100;
+                          return (
+                            <span>
+                              {pct.toFixed(1)}% <span className="opacity-60 ml-0.5 text-[11px]">({Math.abs(stat.tablePL).toLocaleString()})</span>
+                            </span>
+                          );
+                        })()}
+                      </div>
+                      <div className="text-[11px] font-semibold text-zinc-500/80 uppercase tracking-widest leading-none mt-1">
+                        <span className="opacity-60">P/L based off </span>
+                        <span className="text-zinc-300">{(Number(stat.startBalance || 0) + Number(stat.salary || 0)).toLocaleString()}</span>
+                        <span className="opacity-50 ml-1.5 text-[10px]">({Number(stat.startBalance || 0).toLocaleString()} Start + <span className="text-blue-300/80">{Number(stat.salary || 0).toLocaleString()} Pay</span>)</span>
+                      </div>
                     </div>
                   </div>
 
                 </div>
               </div>
             );
-          })}
+            });
+          })()}
         </div>
       </div>
     </div>
