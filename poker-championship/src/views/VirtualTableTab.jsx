@@ -20,7 +20,7 @@ import {
   isBettingRoundComplete,
   startNewHand
 } from '../utils/pokerGameEngine';
-import { getSystemStateAtDay } from '../utils/pokerEngine';
+import { calculatePaydays } from '../utils/pokerEngine';
 
 export default function VirtualTableTab({
   isAuthenticated,
@@ -28,6 +28,7 @@ export default function VirtualTableTab({
   liveGame,
   currentDay,
   sessions,
+  loans,
   currentPlayerId,
   setCurrentPlayerId
 }) {
@@ -43,14 +44,9 @@ export default function VirtualTableTab({
   );
   const [startingStacks, setStartingStacks] = useState(() => {
     const latestSession = sessions && sessions.length > 0 ? sessions[0] : null;
-    const nextDay = currentDay + 1;
-    const { totalSalaryPerPlayer: currentSalary } = getSystemStateAtDay(currentDay, config);
-    const { totalSalaryPerPlayer: nextSalary } = getSystemStateAtDay(nextDay, config);
-    const salaryBump = nextSalary - currentSalary;
-
     return config.players.reduce((acc, p) => {
       const lastKnownBalance = latestSession?.balances?.[p.id] ?? Number(p.startBalance || 0);
-      acc[p.id] = Number(lastKnownBalance) + salaryBump;
+      acc[p.id] = Number(lastKnownBalance);
       return acc;
     }, {});
   });
@@ -490,36 +486,37 @@ export default function VirtualTableTab({
     if (!window.confirm("End this Live Game and save the final player stacks as a new Day session in the Daily Ledger?")) return;
 
     try {
-      // 1. Calculate salary bump for this next day
       const nextDay = currentDay + 1;
-      const { totalSalaryPerPlayer: currentSalary } = getSystemStateAtDay(currentDay, config);
-      const { totalSalaryPerPlayer: nextSalary } = getSystemStateAtDay(nextDay, config);
-      const salaryBump = nextSalary - currentSalary;
-
       const latestSession = sessions && sessions.length > 0 ? sessions[0] : null;
 
-      // 2. Map live game stacks back to ledger schema
-      const sessionBalances = {};
+      // 1. Map live game stacks back to ledger schema (Raw Chips)
+      const rawBalances = {};
       
-      // All roster players
       config.players.forEach(p => {
-        // Find if they were in the live game
         const liveP = liveGame.players.find(lp => lp.id === p.id);
         if (liveP) {
-          // Refund any investments currently in play for this player (pots or bets)
           const refundedStack = Number(liveP.stack || 0) + Number(liveP.totalHandInvestment || 0);
-          sessionBalances[p.id] = refundedStack;
+          rawBalances[p.id] = refundedStack;
         } else {
-          // If not in game, carry forward their balance from latest session (and add salary bump if payday)
-          const lastKnownBalance = latestSession?.balances?.[p.id] ?? Number(p.startBalance);
-          sessionBalances[p.id] = lastKnownBalance + salaryBump;
+          const lastKnownBalance = latestSession?.balances?.[p.id] ?? Number(p.startBalance || 0);
+          rawBalances[p.id] = lastKnownBalance;
         }
       });
 
-      // Save to sessions
+      // 2. Calculate and distribute Paydays
+      const paydaysToDistribute = calculatePaydays(Number(nextDay), config, rawBalances, loans || []);
+      
+      // 3. Final Balances
+      const finalBalances = {};
+      config.players.forEach(p => {
+        finalBalances[p.id] = rawBalances[p.id] + (paydaysToDistribute[p.id] || 0);
+      });
+
+      // 4. Save to sessions
       await addDoc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'sessions'), {
         dayNumber: Number(nextDay),
-        balances: sessionBalances,
+        balances: finalBalances,
+        paydaysDistributed: paydaysToDistribute,
         recordedAt: new Date().toISOString(),
         recordedBy: 'VirtualTableCompanion',
       });
