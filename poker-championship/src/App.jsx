@@ -166,7 +166,7 @@ export default function App() {
     }
   });
 
-  const nextPaydayIn = config.paydayInterval - ((currentDay + 1) % config.paydayInterval);
+  const nextPaydayIn = config.paydayInterval - (currentDay % config.paydayInterval);
 
   // ── Handlers ──────────────────────────────────────────────────────────────────
   const handleAdminLogin = async (email, password) => {
@@ -395,60 +395,80 @@ export default function App() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#09090b] text-zinc-300 font-sans selection:bg-amber-500/30 pb-24 md:pb-8">
-      {/* Header */}
-      <header className="sticky top-0 z-30 bg-[#09090b]/80 backdrop-blur-xl border-b border-white/5">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="bg-gradient-to-br from-amber-400 to-orange-600 p-2 rounded-xl shadow-[0_0_15px_rgba(245,158,11,0.2)]">
+    <div className="flex h-screen bg-[#09090b] text-zinc-300 font-sans selection:bg-amber-500/30 overflow-hidden">
+      
+      {/* Desktop Sidebar */}
+      <aside className="hidden md:flex flex-col w-64 border-r border-white/5 bg-[#09090b]/50">
+        <div className="flex-1 overflow-y-auto py-8 px-4 space-y-2">
+          {navItems.map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-3 w-full px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 ${
+                activeTab === tab.id
+                  ? 'bg-zinc-800 text-amber-400 shadow-sm'
+                  : 'text-zinc-400 hover:text-zinc-100 hover:bg-white/5'
+              }`}
+            >
+              <tab.icon className="h-5 w-5" />
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        <div className="p-4 border-t border-white/5">
+          <button
+            onClick={() => isAuthenticated ? handleAdminLogout() : setShowPinModal(true)}
+            className={`flex items-center justify-center gap-2 w-full py-3 rounded-xl border transition-all ${
+              isAuthenticated
+                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20'
+                : 'bg-zinc-900 border-white/10 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
+            }`}
+          >
+            {isAuthenticated ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
+            <span className="text-sm font-bold">{isAuthenticated ? 'Admin Unlocked' : 'Admin Locked'}</span>
+          </button>
+        </div>
+      </aside>
+
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden relative">
+        
+        {/* Header */}
+        <header className="flex-shrink-0 sticky top-0 z-30 bg-[#09090b]/80 backdrop-blur-xl border-b border-white/5">
+          <div className="h-16 flex items-center justify-center relative px-4">
+            
+            {/* Logo (Left Aligned) */}
+            <div className="absolute left-4 md:left-6 bg-gradient-to-br from-amber-400 to-orange-600 p-2 rounded-xl shadow-[0_0_15px_rgba(245,158,11,0.2)]">
               <Crown className="h-5 w-5 text-white" />
             </div>
-            <div>
-              <h1 className="text-lg font-bold text-white tracking-tight leading-none">Championship</h1>
+
+            {/* Centered Title */}
+            <div className="flex flex-col items-center justify-center translate-y-[2px]">
+              <h1 className="text-xl font-black text-white tracking-tight leading-none">Championship</h1>
               <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold mt-1">
                 Day {currentDay} • {config.players.length} Players
               </p>
             </div>
-          </div>
 
-          {/* Desktop Nav */}
-          <div className="flex items-center gap-4">
-            <nav className="hidden md:flex items-center bg-white/5 p-1 rounded-xl border border-white/5">
-              {navItems.map(tab => (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                    activeTab === tab.id
-                      ? 'bg-zinc-800 text-amber-400 shadow-sm'
-                      : 'text-zinc-400 hover:text-zinc-100 hover:bg-white/5'
-                  }`}
-                >
-                  <tab.icon className="h-4 w-4" />
-                  {tab.label}
-                </button>
-              ))}
-            </nav>
-            
-            {/* Admin Toggle */}
-            <button
-              onClick={() => isAuthenticated ? handleAdminLogout() : setShowPinModal(true)}
-              className={`p-2 rounded-xl border transition-all ${
-                isAuthenticated
-                  ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20'
-                  : 'bg-zinc-900 border-white/10 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
-              }`}
-              title={isAuthenticated ? "Lock Admin Controls" : "Unlock Admin Controls"}
-            >
-              {isAuthenticated ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
-            </button>
+            {/* Mobile Admin Toggle (Absolute right) */}
+            <div className="md:hidden absolute right-4">
+              <button
+                onClick={() => isAuthenticated ? handleAdminLogout() : setShowPinModal(true)}
+                className={`p-2 rounded-xl border transition-all ${
+                  isAuthenticated
+                    ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20'
+                    : 'bg-zinc-900 border-white/10 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
+                }`}
+              >
+                {isAuthenticated ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
+              </button>
+            </div>
           </div>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-8">
-        {activeTab === 'dashboard' && (
+        </header>
+        {/* Scrollable Main Content */}
+        <main className="flex-1 overflow-y-auto pb-24 md:pb-8">
+          <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-8">
+            {activeTab === 'dashboard' && (
           <LeaderboardTab
             actualSystemNetWorth={actualSystemNetWorth}
             config={config}
@@ -457,6 +477,7 @@ export default function App() {
             currentDay={currentDay}
             nextPaydayIn={nextPaydayIn}
             playerStats={playerStats}
+            loans={loans}
           />
         )}
 
@@ -509,7 +530,9 @@ export default function App() {
         {activeTab === 'rules' && (
           <RulesTab />
         )}
-      </main>
+          </div>
+        </main>
+      </div>
 
       {/* Mobile Bottom Navigation */}
       <div className="md:hidden fixed bottom-6 left-4 right-4 z-40">
