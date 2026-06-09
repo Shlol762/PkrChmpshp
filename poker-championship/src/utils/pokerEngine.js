@@ -1,5 +1,4 @@
 export const DEFAULT_CONFIG = {
-  maxSystemNW: 0,
   paydayMax: 0,
   paydayThreshold: 1000,
   paydayInterval: 1, // Default to 1 to prevent division by zero
@@ -40,10 +39,6 @@ export function calculatePaydays(dayNumber, config, rawBalances, loans) {
     totalCirculation += nw;
   });
 
-  if (config.maxSystemNW > 0 && totalCirculation >= config.maxSystemNW) {
-    return {};
-  }
-
   let projectedCirculation = totalCirculation;
   
   config.players.forEach(p => {
@@ -57,17 +52,6 @@ export function calculatePaydays(dayNumber, config, rawBalances, loans) {
     }
     paydays[p.id] = amt;
   });
-
-  const totalInjection = Object.values(paydays).reduce((sum, v) => sum + v, 0);
-  if (config.maxSystemNW > 0 && projectedCirculation + totalInjection > config.maxSystemNW) {
-     const available = config.maxSystemNW - projectedCirculation;
-     if (available <= 0) {
-       for (const pid in paydays) paydays[pid] = 0;
-     } else {
-       const scale = available / totalInjection;
-       for (const pid in paydays) paydays[pid] = Math.floor(paydays[pid] * scale);
-     }
-  }
 
   return paydays;
 }

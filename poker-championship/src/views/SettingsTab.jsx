@@ -51,15 +51,6 @@ export default function SettingsTab({
           </h3>
           <div className="space-y-5">
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">Max System Net Worth</label>
-              <input
-                type="number"
-                value={settingsDraft.maxSystemNW}
-                onChange={e => handleConfigChange('maxSystemNW', e.target.value)}
-                className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white font-mono focus:outline-none focus:border-blue-500 transition-colors"
-              />
-            </div>
-            <div>
               <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">PayDayMAX Amount</label>
               <input
                 type="number"
