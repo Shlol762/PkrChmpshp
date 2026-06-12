@@ -16,7 +16,7 @@ import {
   LogOut,
   Wallet
 } from 'lucide-react';
-import { repaymentAmount } from '../utils/pokerEngine';
+import { repaymentAmount, CHIP_CASE_CAPACITY, MAX_TRANSACTION_LIMIT } from '../utils/pokerEngine';
 
 export default function PlayerDashboardTab({
   currentPlayerId,
@@ -99,6 +99,38 @@ export default function PlayerDashboardTab({
     return baselineBalance + borrowedAmount - lentAmount - activeBuyIn - activeRebuys;
   }, [baselineBalance, borrowedAmount, lentAmount, activeDeclaration]);
 
+  // Live total chips currently withdrawn from the physical case (in play)
+  const totalChipsInPlay = useMemo(() => {
+    return Object.values(playerDeclarations || {}).reduce((sum, dec) => {
+      if (dec?.status === 'active') {
+        return sum + Number(dec.buyIn || 0) + Number(dec.rebuys || 0);
+      }
+      return sum;
+    }, 0);
+  }, [playerDeclarations]);
+
+  const remainingCaseChips = useMemo(() => {
+    return Math.max(0, CHIP_CASE_CAPACITY - totalChipsInPlay);
+  }, [totalChipsInPlay]);
+
+  const maxAllowedBuyIn = useMemo(() => {
+    return Math.min(availableBalance, MAX_TRANSACTION_LIMIT, remainingCaseChips);
+  }, [availableBalance, remainingCaseChips]);
+
+  const maxAllowedRebuy = useMemo(() => {
+    return Math.min(availableBalance, MAX_TRANSACTION_LIMIT, remainingCaseChips);
+  }, [availableBalance, remainingCaseChips]);
+
+  const buyInHelpText = useMemo(() => {
+    if (remainingCaseChips <= 0) {
+      return "The physical chip case is completely empty. Other players must cash out before you can buy in.";
+    }
+    if (availableBalance <= 0) {
+      return "You have no available bank balance to buy in. You must request a loan from another player first.";
+    }
+    return `You must declare a Buy-In to join the table. Each transaction is capped at ${MAX_TRANSACTION_LIMIT.toLocaleString()} chips.`;
+  }, [remainingCaseChips, availableBalance]);
+
   // Clear messages after a delay
   const triggerMessage = (type, text) => {
     if (type === 'error') {
@@ -123,8 +155,14 @@ export default function PlayerDashboardTab({
       triggerMessage('error', 'Please enter a valid Buy-In amount.');
       return;
     }
-    if (amount > availableBalance) {
-      triggerMessage('error', `Cannot buy in for more than your available balance (${availableBalance.toLocaleString()}). Request a loan if you need more.`);
+    if (amount > maxAllowedBuyIn) {
+      if (amount > availableBalance) {
+        triggerMessage('error', `Cannot buy in for more than your available balance (${availableBalance.toLocaleString()}). Request a loan if you need more.`);
+      } else if (amount > MAX_TRANSACTION_LIMIT) {
+        triggerMessage('error', `Cannot buy in for more than the transaction limit of ${MAX_TRANSACTION_LIMIT.toLocaleString()} chips.`);
+      } else {
+        triggerMessage('error', `Cannot buy in for more than the remaining chips in the physical case (${remainingCaseChips.toLocaleString()}).`);
+      }
       return;
     }
 
@@ -155,8 +193,14 @@ export default function PlayerDashboardTab({
       triggerMessage('error', 'Please enter a valid Rebuy amount.');
       return;
     }
-    if (amount > availableBalance) {
-      triggerMessage('error', `Cannot rebuy for more than your available balance (${availableBalance.toLocaleString()}). Request a loan if you need more.`);
+    if (amount > maxAllowedRebuy) {
+      if (amount > availableBalance) {
+        triggerMessage('error', `Cannot rebuy for more than your available balance (${availableBalance.toLocaleString()}). Request a loan if you need more.`);
+      } else if (amount > MAX_TRANSACTION_LIMIT) {
+        triggerMessage('error', `Cannot rebuy for more than the transaction limit of ${MAX_TRANSACTION_LIMIT.toLocaleString()} chips.`);
+      } else {
+        triggerMessage('error', `Cannot rebuy for more than the remaining chips in the physical case (${remainingCaseChips.toLocaleString()}).`);
+      }
       return;
     }
 
@@ -419,7 +463,18 @@ export default function PlayerDashboardTab({
                         <Info className="w-4 h-4 flex-shrink-0 mt-0.5" />
                         <div>
                           <p className="font-bold">Required Action: Buy-In</p>
-                          <p className="mt-0.5 text-zinc-400">You must declare a Buy-In to join the table. Your suggested buy-in is your full available balance, but you can enter a custom lower amount.</p>
+                          <p className="mt-0.5 text-zinc-400">{buyInHelpText}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex justify-between items-center bg-zinc-950/60 border border-white/5 p-3 rounded-xl text-xs text-zinc-400 font-mono">
+                        <div>
+                          <span className="text-zinc-500 block text-[10px] uppercase font-bold tracking-wider">Transaction Limit</span>
+                          <span>{MAX_TRANSACTION_LIMIT.toLocaleString()}</span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-zinc-500 block text-[10px] uppercase font-bold tracking-wider">Case Available</span>
+                          <span>{remainingCaseChips.toLocaleString()} / {CHIP_CASE_CAPACITY.toLocaleString()}</span>
                         </div>
                       </div>
 
@@ -429,16 +484,18 @@ export default function PlayerDashboardTab({
                           <input
                             type="number"
                             required
-                            placeholder={`e.g. ${availableBalance}`}
+                            disabled={maxAllowedBuyIn <= 0}
+                            placeholder={maxAllowedBuyIn > 0 ? `Max allowed: ${maxAllowedBuyIn.toLocaleString()}` : "Unavailable"}
                             value={buyInAmount}
                             onChange={(e) => setBuyInAmount(e.target.value)}
-                            max={availableBalance}
-                            className="bg-zinc-950 border border-white/10 rounded-xl p-3 text-sm text-white w-full focus:outline-none focus:border-amber-500 font-mono"
+                            max={maxAllowedBuyIn}
+                            className="bg-zinc-950 border border-white/10 rounded-xl p-3 text-sm text-white w-full focus:outline-none focus:border-amber-500 font-mono disabled:opacity-50"
                           />
                           <button
                             type="button"
-                            onClick={() => setBuyInAmount(availableBalance.toString())}
-                            className="px-4 bg-zinc-800 text-zinc-300 hover:text-white rounded-xl text-xs font-bold border border-white/5 transition-colors cursor-pointer"
+                            disabled={maxAllowedBuyIn <= 0}
+                            onClick={() => setBuyInAmount(maxAllowedBuyIn.toString())}
+                            className="px-4 bg-zinc-800 text-zinc-300 hover:text-white rounded-xl text-xs font-bold border border-white/5 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             Max
                           </button>
@@ -447,7 +504,8 @@ export default function PlayerDashboardTab({
 
                       <button
                         type="submit"
-                        className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold rounded-xl transition-all flex items-center justify-center gap-2 text-sm shadow-[0_0_15px_rgba(245,158,11,0.1)] cursor-pointer"
+                        disabled={maxAllowedBuyIn <= 0}
+                        className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold rounded-xl transition-all flex items-center justify-center gap-2 text-sm shadow-[0_0_15px_rgba(245,158,11,0.1)] cursor-pointer disabled:opacity-50 disabled:bg-zinc-800 disabled:text-zinc-500 disabled:shadow-none disabled:cursor-not-allowed"
                       >
                         <Coins className="w-4 h-4" />
                         <span>Confirm Buy-In & Start Playing</span>
@@ -478,32 +536,67 @@ export default function PlayerDashboardTab({
 
                       {/* Rebuy Section */}
                       <form onSubmit={handleRebuy} className="space-y-3 p-4 bg-zinc-950/40 border border-white/5 rounded-2xl">
-                        <h4 className="text-xs uppercase font-bold text-zinc-400 tracking-wider">Need More Chips? (Rebuy)</h4>
+                        <div className="flex justify-between items-center">
+                          <h4 className="text-xs uppercase font-bold text-zinc-400 tracking-wider">Need More Chips? (Rebuy)</h4>
+                          <span className="text-[10px] text-zinc-500 font-mono">Case: {remainingCaseChips.toLocaleString()} left</span>
+                        </div>
+
+                        <div className="flex justify-between items-center bg-zinc-950/60 border border-white/5 p-2 rounded-xl text-[10px] text-zinc-400 font-mono">
+                          <div>
+                            <span className="text-zinc-500 block uppercase font-bold tracking-wider">Transaction Cap</span>
+                            <span>{MAX_TRANSACTION_LIMIT.toLocaleString()}</span>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-zinc-500 block uppercase font-bold tracking-wider">Max Rebuy Allowed</span>
+                            <span>{maxAllowedRebuy.toLocaleString()}</span>
+                          </div>
+                        </div>
+
                         <div className="flex gap-3">
                           <input
                             type="number"
                             required
-                            placeholder="Amount to add"
+                            disabled={maxAllowedRebuy <= 0}
+                            placeholder={maxAllowedRebuy > 0 ? `Max: ${maxAllowedRebuy.toLocaleString()}` : "Unavailable"}
                             value={rebuyAmount}
                             onChange={(e) => setRebuyAmount(e.target.value)}
-                            max={availableBalance}
-                            className="bg-zinc-950 border border-white/10 rounded-xl p-2.5 text-sm text-white w-full focus:outline-none focus:border-amber-500 font-mono"
+                            max={maxAllowedRebuy}
+                            className="bg-zinc-950 border border-white/10 rounded-xl p-2.5 text-sm text-white w-full focus:outline-none focus:border-amber-500 font-mono disabled:opacity-50"
                           />
-                          <button
-                            type="button"
-                            onClick={() => setRebuyAmount(Math.min(availableBalance, 1000).toString())}
-                            className="px-3 bg-zinc-800 text-zinc-300 hover:text-white rounded-xl text-xs font-bold border border-white/5 transition-colors cursor-pointer"
-                          >
-                            1,000
-                          </button>
+                          {maxAllowedRebuy >= 1000 && (
+                            <button
+                              type="button"
+                              onClick={() => setRebuyAmount(Math.min(maxAllowedRebuy, 1000).toString())}
+                              className="px-3 bg-zinc-800 text-zinc-300 hover:text-white rounded-xl text-xs font-bold border border-white/5 transition-colors cursor-pointer"
+                            >
+                              1,000
+                            </button>
+                          )}
+                          {maxAllowedRebuy > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setRebuyAmount(maxAllowedRebuy.toString())}
+                              className="px-3 bg-zinc-800 text-zinc-300 hover:text-white rounded-xl text-xs font-bold border border-white/5 transition-colors cursor-pointer"
+                            >
+                              Max
+                            </button>
+                          )}
                           <button
                             type="submit"
-                            className="px-5 bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold rounded-xl text-xs transition-colors flex items-center gap-1.5 cursor-pointer"
+                            disabled={maxAllowedRebuy <= 0}
+                            className="px-5 bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold rounded-xl text-xs transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed"
                           >
                             <Plus className="w-3.5 h-3.5" />
                             <span>Rebuy</span>
                           </button>
                         </div>
+                        {maxAllowedRebuy <= 0 && (
+                          <p className="text-[10px] text-amber-500/80 font-medium">
+                            {remainingCaseChips <= 0 
+                              ? "Cannot rebuy: The physical chip case is empty." 
+                              : "Cannot rebuy: You have no available banked balance. Request a loan."}
+                          </p>
+                        )}
                       </form>
 
                       {/* Cash-Out Section */}

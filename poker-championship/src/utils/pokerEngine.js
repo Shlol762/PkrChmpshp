@@ -5,6 +5,9 @@ export const DEFAULT_CONFIG = {
   players: [] // Kept empty so the application code is generic. New databases will start clean.
 };
 
+export const CHIP_CASE_CAPACITY = 165000;
+export const MAX_TRANSACTION_LIMIT = 10000;
+
 export function repaymentAmount(loan) {
   return Math.round(Number(loan.amount) * (1 + Number(loan.interest || 0) / 100));
 }
