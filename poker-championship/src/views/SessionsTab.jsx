@@ -1,27 +1,67 @@
-import { CalendarDays, Plus, Trash2, ArrowUpRight, ArrowDownRight, Ghost, ScrollText, Pencil } from 'lucide-react';
+import { CalendarDays, Plus, Trash2, ArrowUpRight, ArrowDownRight, Ghost, ScrollText, Pencil, Play, Coins } from 'lucide-react';
 
 export default function SessionsTab({
   isAuthenticated,
   openSessionModal,
   sessions,
   config,
-  deleteSession
+  deleteSession,
+  activeSession,
+  onStartDay,
+  onOpenAudit,
+  playerDeclarations
 }) {
+  const checkedInCount = playerDeclarations ? Object.values(playerDeclarations).filter(d => d.status === 'active' || d.status === 'cashed_out').length : 0;
+  const cashedOutCount = playerDeclarations ? Object.values(playerDeclarations).filter(d => d.status === 'cashed_out').length : 0;
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
+      {/* Active Session Host Alert banner */}
+      {isAuthenticated && activeSession && (
+        <div className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 animate-pulse">
+          <div className="flex items-center gap-3">
+            <div className="bg-amber-500/10 p-2 rounded-xl text-amber-400">
+              <Coins className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-sm font-bold text-white">Day {activeSession.dayNumber} is In Progress</h4>
+              <p className="text-xs text-zinc-500">{checkedInCount} players checked in ({cashedOutCount} cashed out).</p>
+            </div>
+          </div>
+          <button
+            onClick={onOpenAudit}
+            className="w-full sm:w-auto px-4 py-2 bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+          >
+            <Coins className="w-3.5 h-3.5" />
+            <span>Audit & End Day</span>
+          </button>
+        </div>
+      )}
+
       <div className="flex justify-between items-end gap-4">
         <div>
           <h2 className="text-xl font-bold text-white">Daily Ledger</h2>
           <p className="text-sm text-zinc-500">Record physical table chips.</p>
         </div>
         {isAuthenticated && (
-          <button
-            onClick={openSessionModal}
-            className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-bold py-2.5 px-5 rounded-xl transition-all shadow-[0_0_20px_rgba(16,185,129,0.2)]"
-          >
-            <Plus className="h-5 w-5" />
-            <span className="hidden sm:inline">Record Day</span>
-          </button>
+          <div className="flex gap-2">
+            {!activeSession && (
+              <button
+                onClick={onStartDay}
+                className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold py-2.5 px-5 rounded-xl transition-all shadow-[0_0_20px_rgba(245,158,11,0.2)] cursor-pointer"
+              >
+                <Play className="h-5 w-5" />
+                <span>Start Day</span>
+              </button>
+            )}
+            <button
+              onClick={openSessionModal}
+              className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-white/5 hover:text-white font-bold py-2.5 px-5 rounded-xl transition-all cursor-pointer"
+            >
+              <Plus className="h-5 w-5" />
+              <span className="hidden sm:inline">Manual Entry</span>
+            </button>
+          </div>
         )}
       </div>
 
