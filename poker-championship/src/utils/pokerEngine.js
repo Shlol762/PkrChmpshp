@@ -57,12 +57,13 @@ export function calculatePaydays(dayNumber, config, rawBalances, loans) {
 }
 
 export function calculatePlayerStats(sessions, loans, currentDay, config) {
-  const latestSession = sessions.length > 0 ? sessions[0] : null;
+  const completedSessions = sessions.filter(s => s.status !== 'active');
+  const latestSession = completedSessions.length > 0 ? completedSessions[0] : null;
 
   const totalPaydays = {};
   config.players.forEach(p => { totalPaydays[p.id] = 0; });
 
-  sessions.forEach(session => {
+  completedSessions.forEach(session => {
     if (session.paydaysDistributed) {
       for (const [pid, amt] of Object.entries(session.paydaysDistributed)) {
         if (totalPaydays[pid] !== undefined) {
