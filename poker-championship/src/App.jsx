@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { signInWithCustomToken, signInAnonymously, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { collection, onSnapshot, doc, setDoc, addDoc, updateDoc, deleteDoc, getDoc } from 'firebase/firestore';
-import { Trophy, CalendarDays, HandCoins, Settings, Crown, Lock, Unlock, Dices, BookOpen, User } from 'lucide-react';
+import { Trophy, CalendarDays, HandCoins, Settings, Crown, Lock, Unlock, Dices, BookOpen, User, TrendingUp } from 'lucide-react';
 
 // Imports from our new modular files
 import { auth, db, safeAppId } from './firebase';
@@ -24,6 +24,7 @@ import SettingsTab from './views/SettingsTab';
 import VirtualTableTab from './views/VirtualTableTab';
 import RulesTab from './views/RulesTab';
 import PlayerDashboardTab from './views/PlayerDashboardTab';
+import StatsTab from './views/StatsTab';
 
 export default function App() {
   const [user, setUser]           = useState(null);
@@ -536,6 +537,7 @@ export default function App() {
   const navItems = [
     ...(currentPlayerId ? [{ id: 'playerDashboard', icon: User, label: 'My Dashboard' }] : []),
     { id: 'dashboard',    icon: Trophy,       label: 'Leaderboard' },
+    { id: 'stats',        icon: TrendingUp,   label: 'Stats' },
     { id: 'sessions',     icon: CalendarDays, label: 'Sessions' },
     { id: 'loans',        icon: HandCoins,    label: 'Loans' },
     { id: 'virtualTable', icon: Dices,        label: 'Virtual Table' },
@@ -639,6 +641,14 @@ export default function App() {
                 currentDay={currentDay}
                 nextPaydayIn={nextPaydayIn}
                 playerStats={playerStats}
+                loans={loans}
+              />
+            )}
+
+            {activeTab === 'stats' && (
+              <StatsTab
+                config={config}
+                sessions={sessions}
                 loans={loans}
               />
             )}
