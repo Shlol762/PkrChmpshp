@@ -56,7 +56,9 @@ export default function StatsTab({ config, sessions, loans }) {
         id: p.id,
         name: p.name,
         totalSessions: 0,
+        ledgerSessionsCount: 0,
         netProfit: 0,
+        netProfitOfLedgerSessions: 0,
         totalVolume: 0,
         wins: 0,
         bustOuts: 0,
@@ -72,28 +74,58 @@ export default function StatsTab({ config, sessions, loans }) {
     });
 
     // Process sessions chronologically
-    completedSessions.forEach(s => {
+    completedSessions.forEach((s, index) => {
       const day = Number(s.dayNumber);
+      const prevSession = index > 0 ? completedSessions[index - 1] : null;
 
       config.players.forEach(p => {
         const playerStats = statsMap[p.id];
         const playRecord = s.ledger?.[p.id];
+
+        let net = 0;
+        let played = false;
 
         if (playRecord) {
           const buyIn = Number(playRecord.buyIn || 0);
           const rebuys = Number(playRecord.rebuys || 0);
           const cashOut = Number(playRecord.cashOut || 0);
           const volume = buyIn + rebuys;
-          const net = cashOut - volume;
+          net = cashOut - volume;
+          played = true;
 
+          playerStats.totalVolume += volume;
+          playerStats.ledgerSessionsCount += 1;
+          playerStats.netProfitOfLedgerSessions += net;
+          if (cashOut === 0) playerStats.bustOuts += 1;
+
+          // Loans calculation on played days
+          const dayLoans = loans.filter(l => 
+            Number(l.dayIssued) === day && 
+            l.borrower === p.id && 
+            ['active', 'settled', 'pending_settlement'].includes(l.status)
+          );
+          const borrowedToday = dayLoans.reduce((sum, l) => sum + Number(l.amount || 0), 0);
+          playerStats.loansBorrowedOnPlayDays += borrowedToday;
+        } else {
+          // Fallback to balance differential for older/manually-entered sessions
+          const currentBal = s.balances?.[p.id] ?? Number(p.startBalance || 0);
+          const prevBal = prevSession?.balances?.[p.id] ?? Number(p.startBalance || 0);
+          const paydayIncrease = s.paydaysDistributed?.[p.id] || 0;
+          const balanceNet = currentBal - prevBal - paydayIncrease;
+
+          if (balanceNet !== 0) {
+            net = balanceNet;
+            played = true;
+          }
+        }
+
+        if (played) {
           playerStats.totalSessions += 1;
           playerStats.netProfit += net;
-          playerStats.totalVolume += volume;
           playerStats.bestSwing = Math.max(playerStats.bestSwing, net);
           playerStats.worstSwing = Math.min(playerStats.worstSwing, net);
 
           if (net > 0) playerStats.wins += 1;
-          if (cashOut === 0) playerStats.bustOuts += 1;
 
           // Streaks
           if (net > 0) {
@@ -109,15 +141,6 @@ export default function StatsTab({ config, sessions, loans }) {
             playerStats.currentWinStreak = 0;
             playerStats.currentLossStreak = 0;
           }
-
-          // Loans calculation on played days
-          const dayLoans = loans.filter(l => 
-            Number(l.dayIssued) === day && 
-            l.borrower === p.id && 
-            ['active', 'settled', 'pending_settlement'].includes(l.status)
-          );
-          const borrowedToday = dayLoans.reduce((sum, l) => sum + Number(l.amount || 0), 0);
-          playerStats.loansBorrowedOnPlayDays += borrowedToday;
         }
 
         // Push history point (flat if didn't play)
@@ -128,15 +151,19 @@ export default function StatsTab({ config, sessions, loans }) {
       });
     });
 
-    // Derive rates and clean infinity defaults
+    // Derive rates and clean defaults
     return Object.values(statsMap).map((ps, idx) => {
       const best = ps.bestSwing === -Infinity ? 0 : ps.bestSwing;
       const worst = ps.worstSwing === Infinity ? 0 : ps.worstSwing;
       const winRate = ps.totalSessions > 0 ? (ps.wins / ps.totalSessions) * 100 : 0;
-      const roi = ps.totalVolume > 0 ? (ps.netProfit / ps.totalVolume) * 100 : 0;
       const avgProfit = ps.totalSessions > 0 ? (ps.netProfit / ps.totalSessions) : 0;
-      const bustOutRate = ps.totalSessions > 0 ? (ps.bustOuts / ps.totalSessions) * 100 : 0;
-      const loanDependency = ps.totalVolume > 0 ? Math.min(100, (ps.loansBorrowedOnPlayDays / ps.totalVolume) * 100) : 0;
+
+      // Null out volume-dependent stats for players/sessions without ledger records
+      const hasLedger = ps.ledgerSessionsCount > 0;
+      const totalVolume = hasLedger ? ps.totalVolume : null;
+      const roi = hasLedger && ps.totalVolume > 0 ? (ps.netProfitOfLedgerSessions / ps.totalVolume) * 100 : null;
+      const bustOutRate = hasLedger ? (ps.bustOuts / ps.ledgerSessionsCount) * 100 : null;
+      const loanDependency = hasLedger && ps.totalVolume > 0 ? Math.min(100, (ps.loansBorrowedOnPlayDays / ps.totalVolume) * 100) : null;
 
       // Current Streak string representation
       let currentStreakStr = '-';
@@ -190,6 +217,12 @@ export default function StatsTab({ config, sessions, loans }) {
     return [...playerStats].sort((a, b) => {
       let valA = a[sortField];
       let valB = b[sortField];
+
+      // Handle null values (older data without ledger records) by placing them at the bottom of the table
+      if (valA === null && valB === null) return 0;
+      if (valA === null) return 1;
+      if (valB === null) return -1;
+
       if (typeof valA === 'string') {
         return sortDirection === 'asc' 
           ? valA.localeCompare(valB) 
@@ -682,8 +715,8 @@ export default function StatsTab({ config, sessions, loans }) {
                         </td>
 
                         {/* ROI */}
-                        <td className={`p-3 text-right font-mono font-bold ${ps.roi >= 0 ? 'text-emerald-400/80' : 'text-rose-400/80'}`}>
-                          {ps.roi >= 0 ? '+' : ''}{ps.roi.toFixed(1)}%
+                        <td className={`p-3 text-right font-mono font-bold ${ps.roi !== null ? (ps.roi >= 0 ? 'text-emerald-400/80' : 'text-rose-400/80') : 'text-zinc-600'}`}>
+                          {ps.roi !== null ? `${ps.roi >= 0 ? '+' : ''}${ps.roi.toFixed(1)}%` : '-'}
                         </td>
 
                         {/* Win Rate */}
@@ -697,13 +730,13 @@ export default function StatsTab({ config, sessions, loans }) {
                         </td>
 
                         {/* Volume */}
-                        <td className="p-3 text-right font-mono text-zinc-400">
-                          {ps.totalVolume.toLocaleString()}
+                        <td className={`p-3 text-right font-mono ${ps.totalVolume !== null ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                          {ps.totalVolume !== null ? ps.totalVolume.toLocaleString() : '-'}
                         </td>
 
                         {/* Bust-out Rate */}
-                        <td className="p-3 text-right font-mono text-zinc-400">
-                          {ps.bustOutRate.toFixed(0)}%
+                        <td className={`p-3 text-right font-mono ${ps.bustOutRate !== null ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                          {ps.bustOutRate !== null ? `${ps.bustOutRate.toFixed(0)}%` : '-'}
                         </td>
 
                         {/* Streaks */}
@@ -717,8 +750,8 @@ export default function StatsTab({ config, sessions, loans }) {
                         </td>
 
                         {/* Loan Dependency */}
-                        <td className={`p-3 text-right font-mono ${ps.loanDependency > 50 ? 'text-amber-400' : ps.loanDependency > 0 ? 'text-zinc-400' : 'text-zinc-600'}`}>
-                          {ps.loanDependency.toFixed(0)}%
+                        <td className={`p-3 text-right font-mono ${ps.loanDependency !== null ? (ps.loanDependency > 50 ? 'text-amber-400' : ps.loanDependency > 0 ? 'text-zinc-400' : 'text-zinc-600') : 'text-zinc-600'}`}>
+                          {ps.loanDependency !== null ? `${ps.loanDependency.toFixed(0)}%` : '-'}
                         </td>
 
                         {/* Swings (Best / Worst) */}
