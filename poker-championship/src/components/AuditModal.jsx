@@ -50,8 +50,6 @@ export default function AuditModal({
     setError('');
   }, [isOpen, activeSession, config.players]);
 
-  if (!isOpen || !activeSession) return null;
-
   // Handle value change
   const handleChange = (playerId, field, value) => {
     setLedgerDraft(prev => ({
@@ -137,6 +135,8 @@ export default function AuditModal({
       setIsLoading(false);
     }
   };
+
+  if (!isOpen || !activeSession) return null;
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in">
