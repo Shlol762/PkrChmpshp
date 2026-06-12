@@ -37,7 +37,7 @@ export default function StatsTab({ config, sessions, loans }) {
   // 1. Process Completed Sessions
   const completedSessions = useMemo(() => {
     return sessions
-      .filter(s => s.status === 'completed')
+      .filter(s => s.status !== 'active')
       .sort((a, b) => Number(a.dayNumber) - Number(b.dayNumber));
   }, [sessions]);
 
