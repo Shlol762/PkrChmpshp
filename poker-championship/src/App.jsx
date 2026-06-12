@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { signInWithCustomToken, signInAnonymously, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { collection, onSnapshot, doc, setDoc, addDoc, updateDoc, deleteDoc, getDoc } from 'firebase/firestore';
-import { Trophy, CalendarDays, HandCoins, Settings, Crown, Lock, Unlock, Dices, BookOpen } from 'lucide-react';
+import { Trophy, CalendarDays, HandCoins, Settings, Crown, Lock, Unlock, Dices, BookOpen, User } from 'lucide-react';
 
 // Imports from our new modular files
 import { auth, db, safeAppId } from './firebase';
@@ -15,6 +15,7 @@ import {
 import PinModal from './components/PinModal';
 import SessionModal from './components/SessionModal';
 import LoanModal from './components/LoanModal';
+import AuditModal from './components/AuditModal';
 
 import LeaderboardTab from './views/LeaderboardTab';
 import SessionsTab from './views/SessionsTab';
@@ -22,6 +23,7 @@ import LoansTab from './views/LoansTab';
 import SettingsTab from './views/SettingsTab';
 import VirtualTableTab from './views/VirtualTableTab';
 import RulesTab from './views/RulesTab';
+import PlayerDashboardTab from './views/PlayerDashboardTab';
 
 export default function App() {
   const [user, setUser]           = useState(null);
@@ -29,14 +31,16 @@ export default function App() {
   // App State
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [showPinModal, setShowPinModal]       = useState(false);
+  const [showAuditModal, setShowAuditModal]   = useState(false);
 
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [currentPlayerId, setCurrentPlayerId] = useState(() => localStorage.getItem('poker_player_id') || null);
+  const [activeTab, setActiveTab] = useState(() => localStorage.getItem('poker_player_id') ? 'playerDashboard' : 'dashboard');
+  
   const [sessions, setSessions]   = useState([]);
   const [loans, setLoans]         = useState([]);
   const [liveGame, setLiveGame]   = useState(null);
+  const [playerDeclarations, setPlayerDeclarations] = useState({});
   const [loading, setLoading]     = useState(true);
-
-  const [currentPlayerId, setCurrentPlayerId] = useState(() => localStorage.getItem('poker_player_id') || null);
 
   const [config, setConfig]               = useState(DEFAULT_CONFIG);
   const [settingsDraft, setSettingsDraft] = useState(DEFAULT_CONFIG);
@@ -44,6 +48,10 @@ export default function App() {
   const currentDay = useMemo(() => {
     if (sessions.length === 0) return 0;
     return Math.max(...sessions.map(s => Number(s.dayNumber)));
+  }, [sessions]);
+
+  const activeSession = useMemo(() => {
+    return sessions.find(s => s.status === 'active');
   }, [sessions]);
 
   const [showSessionModal, setShowSessionModal] = useState(false);
@@ -84,6 +92,7 @@ export default function App() {
     const sessionsRef = collection(db, 'artifacts', safeAppId, 'public', 'data', 'sessions');
     const loansRef    = collection(db, 'artifacts', safeAppId, 'public', 'data', 'loans');
     const liveGameRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGame', 'main');
+    const declarationsRef = collection(db, 'artifacts', safeAppId, 'public', 'data', 'playerDeclarations');
 
     const unsubConfig = onSnapshot(configRef, snap => {
       if (snap.exists()) {
@@ -116,7 +125,15 @@ export default function App() {
       }
     }, err => console.error('Live game fetch error:', err));
 
-    return () => { unsubConfig(); unsubSessions(); unsubLoans(); unsubLiveGame(); };
+    const unsubDeclarations = onSnapshot(declarationsRef, snap => {
+      const data = {};
+      snap.docs.forEach(d => {
+        data[d.id] = d.data();
+      });
+      setPlayerDeclarations(data);
+    }, err => console.error('Declarations fetch error:', err));
+
+    return () => { unsubConfig(); unsubSessions(); unsubLoans(); unsubLiveGame(); unsubDeclarations(); };
   }, [user]);
 
   // Fetch private PINs when admin is authenticated
@@ -184,6 +201,118 @@ export default function App() {
       await signOut(auth);
     } catch (err) {
       console.error('Admin logout error:', err);
+    }
+  };
+
+  const handlePlayerLogin = async (playerId, pin) => {
+    try {
+      const claimRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'playerClaims', playerId);
+      await setDoc(claimRef, {
+        playerId,
+        pin,
+        timestamp: new Date().toISOString()
+      });
+      setCurrentPlayerId(playerId);
+      localStorage.setItem('poker_player_id', playerId);
+      localStorage.setItem('poker_player_pin', pin);
+      setActiveTab('playerDashboard');
+      return { success: true };
+    } catch (err) {
+      console.error("Player PIN login failed:", err);
+      return { success: false, error: "Incorrect PIN. Please check with the host." };
+    }
+  };
+
+  const handleStartDay = async () => {
+    if (!user || !isAuthenticated) return;
+    const nextDay = currentDay + 1;
+    if (!window.confirm(`Start game session for Day ${nextDay}?`)) return;
+
+    try {
+      await addDoc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'sessions'), {
+        dayNumber: Number(nextDay),
+        status: 'active',
+        ledger: {},
+        balances: {},
+        paydaysDistributed: {},
+        recordedAt: new Date().toISOString(),
+        recordedBy: user.uid
+      });
+    } catch (err) {
+      console.error("Error starting day:", err);
+      alert("Failed to start day.");
+    }
+  };
+
+  const handleCommitDay = async (ledgerDraft) => {
+    if (!user || !isAuthenticated || !activeSession) return;
+    try {
+      const nextDay = activeSession.dayNumber;
+      
+      // 1. Compile raw final balances from ledgerDraft
+      const rawBalances = {};
+      config.players.forEach(p => {
+        const draft = ledgerDraft[p.id];
+        if (draft && draft.played) {
+          const latestSession = sessions.find(s => s.id !== activeSession.id && s.status !== 'active');
+          const prevBal = latestSession?.balances?.[p.id] ?? Number(p.startBalance || 0);
+          rawBalances[p.id] = prevBal - draft.buyIn - draft.rebuys + draft.cashOut;
+        } else {
+          const latestSession = sessions.find(s => s.id !== activeSession.id && s.status !== 'active');
+          const prevBal = latestSession?.balances?.[p.id] ?? Number(p.startBalance || 0);
+          rawBalances[p.id] = prevBal;
+        }
+      });
+
+      // 2. Calculate paydays
+      const paydaysToDistribute = calculatePaydays(Number(nextDay), config, rawBalances, loans);
+      
+      // 3. Final Balances after paydays
+      const finalBalances = {};
+      config.players.forEach(p => {
+        finalBalances[p.id] = rawBalances[p.id] + (paydaysToDistribute[p.id] || 0);
+      });
+
+      // 4. Update the active session document
+      const sessionRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'sessions', activeSession.id);
+      
+      const finalLedger = {};
+      config.players.forEach(p => {
+        const draft = ledgerDraft[p.id];
+        if (draft && draft.played) {
+          finalLedger[p.id] = {
+            buyIn: draft.buyIn,
+            rebuys: draft.rebuys,
+            cashOut: draft.cashOut,
+            status: 'cashed_out'
+          };
+        }
+      });
+
+      await updateDoc(sessionRef, {
+        status: 'completed',
+        balances: finalBalances,
+        paydaysDistributed: paydaysToDistribute,
+        ledger: finalLedger,
+        recordedAt: new Date().toISOString(),
+        recordedBy: user.uid
+      });
+
+      // 5. Clean up temporary playerClaims and playerDeclarations
+      for (const p of config.players) {
+        try {
+          await deleteDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'playerClaims', p.id));
+        } catch (e) { /* ignore */ }
+        try {
+          await deleteDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'playerDeclarations', p.id));
+        } catch (e) { /* ignore */ }
+      }
+
+      setShowAuditModal(false);
+      alert(`Day ${nextDay} ledger committed and finalized successfully!`);
+    } catch (err) {
+      console.error("Error committing ledger:", err);
+      alert("Failed to commit day.");
     }
   };
 
@@ -320,19 +449,21 @@ export default function App() {
         ...loanDraft, status: 'active', recordedAt: new Date().toISOString(), recordedBy: user.uid,
       });
 
-      // 2. Immediately adjust physical table chips in the latest session
+      // 2. Immediately adjust physical table chips in the latest completed session
       if (sessions.length > 0) {
         const latestSession = sessions[0];
-        const newBalances = { ...latestSession.balances };
-        const principal = Number(loanDraft.amount);
+        if (latestSession.status !== 'active') {
+          const newBalances = { ...latestSession.balances };
+          const principal = Number(loanDraft.amount);
 
-        const borrowerBal = newBalances[loanDraft.borrower] ?? Number(config.players.find(p => p.id === loanDraft.borrower)?.startBalance || 0);
-        const lenderBal   = newBalances[loanDraft.lender] ?? Number(config.players.find(p => p.id === loanDraft.lender)?.startBalance || 0);
+          const borrowerBal = newBalances[loanDraft.borrower] ?? Number(config.players.find(p => p.id === loanDraft.borrower)?.startBalance || 0);
+          const lenderBal   = newBalances[loanDraft.lender] ?? Number(config.players.find(p => p.id === loanDraft.lender)?.startBalance || 0);
 
-        newBalances[loanDraft.borrower] = borrowerBal + principal;
-        newBalances[loanDraft.lender]   = lenderBal - principal;
+          newBalances[loanDraft.borrower] = borrowerBal + principal;
+          newBalances[loanDraft.lender]   = lenderBal - principal;
 
-        await updateDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'sessions', latestSession.id), { balances: newBalances });
+          await updateDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'sessions', latestSession.id), { balances: newBalances });
+        }
       }
 
       setShowLoanModal(false);
@@ -355,19 +486,21 @@ export default function App() {
 
       if (sessions.length > 0) {
         const latestSession = sessions[0];
-        const newBalances = { ...latestSession.balances };
-        const borrowerBal = newBalances[loan.borrower] ?? Number(config.players.find(p=>p.id===loan.borrower)?.startBalance || 0);
-        const lenderBal   = newBalances[loan.lender] ?? Number(config.players.find(p=>p.id===loan.lender)?.startBalance || 0);
+        if (latestSession.status !== 'active') {
+          const newBalances = { ...latestSession.balances };
+          const borrowerBal = newBalances[loan.borrower] ?? Number(config.players.find(p=>p.id===loan.borrower)?.startBalance || 0);
+          const lenderBal   = newBalances[loan.lender] ?? Number(config.players.find(p=>p.id===loan.lender)?.startBalance || 0);
 
-        if (isSettling) {
-          newBalances[loan.borrower] = borrowerBal - repayAmount;
-          newBalances[loan.lender]   = lenderBal + repayAmount;
-        } else {
-          newBalances[loan.borrower] = borrowerBal + repayAmount;
-          newBalances[loan.lender]   = lenderBal - repayAmount;
+          if (isSettling) {
+            newBalances[loan.borrower] = borrowerBal - repayAmount;
+            newBalances[loan.lender]   = lenderBal + repayAmount;
+          } else {
+            newBalances[loan.borrower] = borrowerBal + repayAmount;
+            newBalances[loan.lender]   = lenderBal - repayAmount;
+          }
+
+          await updateDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'sessions', latestSession.id), { balances: newBalances });
         }
-
-        await updateDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'sessions', latestSession.id), { balances: newBalances });
       }
     } catch (err) { console.error('Error updating loan:', err); }
   };
@@ -385,7 +518,23 @@ export default function App() {
     );
   }
 
+  // Forced Login Gate: blocks entire app if not authenticated
+  if (!currentPlayerId && !isAuthenticated) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[#09090b] text-zinc-200">
+        <PinModal
+          isOpen={true}
+          onClose={null} // forced
+          config={config}
+          onPlayerLogin={handlePlayerLogin}
+          onAdminLogin={handleAdminLogin}
+        />
+      </div>
+    );
+  }
+
   const navItems = [
+    ...(currentPlayerId ? [{ id: 'playerDashboard', icon: User, label: 'My Dashboard' }] : []),
     { id: 'dashboard',    icon: Trophy,       label: 'Leaderboard' },
     { id: 'sessions',     icon: CalendarDays, label: 'Sessions' },
     { id: 'loans',        icon: HandCoins,    label: 'Loans' },
@@ -441,7 +590,7 @@ export default function App() {
             <div className="absolute left-4 md:left-6 bg-gradient-to-br from-amber-400 to-orange-600 p-2 rounded-xl shadow-[0_0_15px_rgba(245,158,11,0.2)]">
               <Crown className="h-5 w-5 text-white" />
             </div>
-
+ 
             {/* Centered Title */}
             <div className="flex flex-col items-center justify-center translate-y-[2px]">
               <h1 className="text-xl font-black text-white tracking-tight leading-none">Championship</h1>
@@ -449,7 +598,7 @@ export default function App() {
                 Day {currentDay} • {config.players.length} Players
               </p>
             </div>
-
+ 
             {/* Mobile Admin Toggle (Absolute right) */}
             <div className="md:hidden absolute right-4">
               <button
@@ -468,72 +617,90 @@ export default function App() {
         {/* Scrollable Main Content */}
         <main className="flex-1 overflow-y-auto pb-24 md:pb-8">
           <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-8">
+            {activeTab === 'playerDashboard' && (
+              <PlayerDashboardTab
+                currentPlayerId={currentPlayerId}
+                setCurrentPlayerId={setCurrentPlayerId}
+                config={config}
+                sessions={sessions}
+                loans={loans}
+                currentDay={currentDay}
+                playerStats={playerStats}
+                playerDeclarations={playerDeclarations}
+              />
+            )}
+
             {activeTab === 'dashboard' && (
-          <LeaderboardTab
-            actualSystemNetWorth={actualSystemNetWorth}
-            config={config}
-            salaryPerPlayer={salaryPerPlayer}
-            totalPaydays={totalPaydays}
-            currentDay={currentDay}
-            nextPaydayIn={nextPaydayIn}
-            playerStats={playerStats}
-            loans={loans}
-          />
-        )}
-
-        {activeTab === 'sessions' && (
-          <SessionsTab
-            isAuthenticated={isAuthenticated}
-            openSessionModal={openSessionModal}
-            sessions={sessions}
-            config={config}
-            deleteSession={deleteSession}
-          />
-        )}
-
-        {activeTab === 'loans' && (
-          <LoansTab
-            isAuthenticated={isAuthenticated}
-            openLoanModal={openLoanModal}
-            loans={loans}
-            currentDay={currentDay}
-            toggleLoanStatus={toggleLoanStatus}
-            getPlayerName={getPlayerName}
-          />
-        )}
-
-        {activeTab === 'settings' && (
-          <SettingsTab
-            isAuthenticated={isAuthenticated}
-            setShowPinModal={setShowPinModal}
-            settingsDraft={settingsDraft}
-            handleConfigChange={handleConfigChange}
-            handlePlayerChange={handlePlayerChange}
-            addPlayer={addPlayer}
-            removePlayer={removePlayer}
-            saveSettings={saveSettings}
-          />
-        )}
-
-        {activeTab === 'virtualTable' && (
-          <VirtualTableTab
-            isAuthenticated={isAuthenticated}
-            config={config}
-            liveGame={liveGame}
-            currentDay={currentDay}
-            sessions={sessions}
-            currentPlayerId={currentPlayerId}
-            setCurrentPlayerId={setCurrentPlayerId}
-          />
-        )}
-
-        {activeTab === 'rules' && (
-          <RulesTab />
-        )}
+              <LeaderboardTab
+                actualSystemNetWorth={actualSystemNetWorth}
+                config={config}
+                salaryPerPlayer={salaryPerPlayer}
+                totalPaydays={totalPaydays}
+                currentDay={currentDay}
+                nextPaydayIn={nextPaydayIn}
+                playerStats={playerStats}
+                loans={loans}
+              />
+            )}
+ 
+            {activeTab === 'sessions' && (
+              <SessionsTab
+                isAuthenticated={isAuthenticated}
+                openSessionModal={openSessionModal}
+                sessions={sessions}
+                config={config}
+                deleteSession={deleteSession}
+                activeSession={activeSession}
+                onStartDay={handleStartDay}
+                onOpenAudit={() => setShowAuditModal(true)}
+                playerDeclarations={playerDeclarations}
+              />
+            )}
+ 
+            {activeTab === 'loans' && (
+              <LoansTab
+                isAuthenticated={isAuthenticated}
+                openLoanModal={openLoanModal}
+                loans={loans}
+                currentDay={currentDay}
+                toggleLoanStatus={toggleLoanStatus}
+                getPlayerName={getPlayerName}
+              />
+            )}
+ 
+            {activeTab === 'settings' && (
+              <SettingsTab
+                isAuthenticated={isAuthenticated}
+                setShowPinModal={setShowPinModal}
+                settingsDraft={settingsDraft}
+                handleConfigChange={handleConfigChange}
+                handlePlayerChange={handlePlayerChange}
+                addPlayer={addPlayer}
+                removePlayer={removePlayer}
+                saveSettings={saveSettings}
+              />
+            )}
+ 
+            {activeTab === 'virtualTable' && (
+              <VirtualTableTab
+                isAuthenticated={isAuthenticated}
+                config={config}
+                liveGame={liveGame}
+                currentDay={currentDay}
+                sessions={sessions}
+                currentPlayerId={currentPlayerId}
+                setCurrentPlayerId={setCurrentPlayerId}
+                playerDeclarations={playerDeclarations}
+              />
+            )}
+ 
+            {activeTab === 'rules' && (
+              <RulesTab />
+            )}
           </div>
         </main>
       </div>
-
+ 
       {/* Mobile Bottom Navigation */}
       <div className="md:hidden fixed bottom-6 left-4 right-4 z-40">
         <nav className="bg-[#09090b]/90 backdrop-blur-xl border border-white/10 rounded-2xl flex justify-around p-2 shadow-2xl">
@@ -554,14 +721,16 @@ export default function App() {
           })}
         </nav>
       </div>
-
+ 
       {/* Modals */}
       <PinModal
         isOpen={showPinModal}
         onClose={() => setShowPinModal(false)}
-        onLogin={handleAdminLogin}
+        config={config}
+        onPlayerLogin={handlePlayerLogin}
+        onAdminLogin={handleAdminLogin}
       />
-
+ 
       <SessionModal
         isOpen={showSessionModal}
         onClose={() => setShowSessionModal(false)}
@@ -574,7 +743,7 @@ export default function App() {
         sessions={sessions}
         loans={loans}
       />
-
+ 
       <LoanModal
         isOpen={showLoanModal}
         onClose={() => setShowLoanModal(false)}
@@ -582,6 +751,16 @@ export default function App() {
         setLoanDraft={setLoanDraft}
         saveLoan={saveLoan}
         config={config}
+      />
+
+      <AuditModal
+        isOpen={showAuditModal}
+        onClose={() => setShowAuditModal(false)}
+        activeSession={activeSession}
+        config={config}
+        sessions={sessions}
+        onCommit={handleCommitDay}
+        playerDeclarations={playerDeclarations}
       />
     </div>
   );

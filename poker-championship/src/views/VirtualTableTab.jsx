@@ -30,7 +30,8 @@ export default function VirtualTableTab({
   sessions,
   loans,
   currentPlayerId,
-  setCurrentPlayerId
+  setCurrentPlayerId,
+  playerDeclarations
 }) {
   // Setup local states for Seat Claiming
   const [claimPlayerId, setClaimPlayerId] = useState('');
@@ -44,9 +45,20 @@ export default function VirtualTableTab({
   );
   const [startingStacks, setStartingStacks] = useState(() => {
     const latestSession = sessions && sessions.length > 0 ? sessions[0] : null;
+    const latestCompletedSession = sessions && sessions.length > 0 ? sessions.find(s => s.status !== 'active') : null;
+
     return config.players.reduce((acc, p) => {
-      const lastKnownBalance = latestSession?.balances?.[p.id] ?? Number(p.startBalance || 0);
-      acc[p.id] = Number(lastKnownBalance);
+      if (latestSession && latestSession.status === 'active') {
+        const declaration = playerDeclarations?.[p.id];
+        if (declaration && declaration.status === 'active') {
+          acc[p.id] = Number(declaration.buyIn || 0) + Number(declaration.rebuys || 0);
+        } else {
+          acc[p.id] = Number(latestCompletedSession?.balances?.[p.id] ?? p.startBalance ?? 0);
+        }
+      } else {
+        const lastKnownBalance = latestSession?.balances?.[p.id] ?? Number(p.startBalance || 0);
+        acc[p.id] = Number(lastKnownBalance);
+      }
       return acc;
     }, {});
   });
@@ -483,47 +495,37 @@ export default function VirtualTableTab({
 
   const handleSaveToLedger = async () => {
     if (!liveGame || !isAuthenticated) return;
-    if (!window.confirm("End this Live Game and save the final player stacks as a new Day session in the Daily Ledger?")) return;
+
+    const latestSession = sessions && sessions.length > 0 ? sessions[0] : null;
+    if (!latestSession || latestSession.status !== 'active') {
+      alert("No active session found in the Daily Ledger. Please go to the Sessions/Daily Ledger tab and click 'Start Day' first.");
+      return;
+    }
+
+    if (!window.confirm("End this Live Game and save the final player stacks as cash-out drafts?")) return;
 
     try {
-      const nextDay = currentDay + 1;
-      const latestSession = sessions && sessions.length > 0 ? sessions[0] : null;
-
-      // 1. Map live game stacks back to ledger schema (Raw Chips)
-      const rawBalances = {};
-      
-      config.players.forEach(p => {
+      // Write draft cash-outs to playerDeclarations collection
+      for (const p of config.players) {
         const liveP = liveGame.players.find(lp => lp.id === p.id);
         if (liveP) {
           const refundedStack = Number(liveP.stack || 0) + Number(liveP.totalHandInvestment || 0);
-          rawBalances[p.id] = refundedStack;
-        } else {
-          const lastKnownBalance = latestSession?.balances?.[p.id] ?? Number(p.startBalance || 0);
-          rawBalances[p.id] = lastKnownBalance;
+          const decRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'playerDeclarations', p.id);
+          
+          const currentDec = playerDeclarations?.[p.id] || {};
+          await setDoc(decRef, {
+            buyIn: currentDec.buyIn !== undefined ? Number(currentDec.buyIn) : Number(startingStacks[p.id] || 0),
+            rebuys: currentDec.rebuys !== undefined ? Number(currentDec.rebuys) : 0,
+            cashOut: refundedStack,
+            status: 'cashed_out',
+            timestamp: new Date().toISOString()
+          });
         }
-      });
-
-      // 2. Calculate and distribute Paydays
-      const paydaysToDistribute = calculatePaydays(Number(nextDay), config, rawBalances, loans || []);
-      
-      // 3. Final Balances
-      const finalBalances = {};
-      config.players.forEach(p => {
-        finalBalances[p.id] = rawBalances[p.id] + (paydaysToDistribute[p.id] || 0);
-      });
-
-      // 4. Save to sessions
-      await addDoc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'sessions'), {
-        dayNumber: Number(nextDay),
-        balances: finalBalances,
-        paydaysDistributed: paydaysToDistribute,
-        recordedAt: new Date().toISOString(),
-        recordedBy: 'VirtualTableCompanion',
-      });
+      }
 
       // Clear the live game state
       await deleteDoc(gameDocRef);
-      alert(`Game ended successfully! Final stacks saved as Session Day ${nextDay}.`);
+      alert(`Game ended successfully! Final stacks saved as cash-out drafts for Day ${latestSession.dayNumber}. Reconcile and commit the day in the Daily Ledger tab.`);
     } catch (err) {
       console.error("Error saving live game to ledger:", err);
       alert("Failed to save session to ledger.");
