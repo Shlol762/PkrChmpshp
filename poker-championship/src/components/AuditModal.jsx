@@ -199,13 +199,13 @@ export default function AuditModal({
         <div className="flex-1 overflow-y-auto mb-6 border border-white/5 rounded-2xl bg-zinc-950/40 p-2">
           <table className="w-full text-left text-sm border-collapse">
             <thead>
-              <tr className="border-b border-white/5 text-zinc-500 text-[10px] uppercase font-bold tracking-wider">
-                <th className="p-3">Player</th>
-                <th className="p-3 text-center">Status</th>
-                <th className="p-3 text-right">Buy-In</th>
-                <th className="p-3 text-right">Rebuys</th>
-                <th className="p-3 text-right">Cash-Out</th>
-                <th className="p-3 text-right">Profit / Loss</th>
+              <tr className="text-zinc-500 text-[10px] uppercase font-bold tracking-wider">
+                <th className="sticky top-0 bg-zinc-950 border-b border-white/5 p-3 z-10">Player</th>
+                <th className="sticky top-0 bg-zinc-950 border-b border-white/5 p-3 text-center z-10">Status</th>
+                <th className="sticky top-0 bg-zinc-950 border-b border-white/5 p-3 text-right z-10">Buy-In</th>
+                <th className="sticky top-0 bg-zinc-950 border-b border-white/5 p-3 text-right z-10">Rebuys</th>
+                <th className="sticky top-0 bg-zinc-950 border-b border-white/5 p-3 text-right z-10">Cash-Out</th>
+                <th className="sticky top-0 bg-zinc-950 border-b border-white/5 p-3 text-right z-10">Profit / Loss</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
