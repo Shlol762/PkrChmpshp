@@ -29,7 +29,20 @@ service cloud.firestore {
     }
     match /artifacts/{appId}/public/data/loans/{docId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow write: if isAdmin() || (
+        request.auth != null && (
+          // If creating: borrower or lender PIN must match their claim
+          (request.method == 'create' && (
+            getPlayerPin(request.resource.data.borrower) == get(/databases/$(database)/documents/artifacts/$(appId)/public/data/playerClaims/$(request.resource.data.borrower)).data.pin ||
+            getPlayerPin(request.resource.data.lender) == get(/databases/$(database)/documents/artifacts/$(appId)/public/data/playerClaims/$(request.resource.data.lender)).data.pin
+          )) ||
+          // If updating: borrower or lender PIN must match their claim
+          (request.method == 'update' && (
+            getPlayerPin(resource.data.borrower) == get(/databases/$(database)/documents/artifacts/$(appId)/public/data/playerClaims/$(resource.data.borrower)).data.pin ||
+            getPlayerPin(resource.data.lender) == get(/databases/$(database)/documents/artifacts/$(appId)/public/data/playerClaims/$(resource.data.lender)).data.pin
+          ))
+        )
+      );
     }
 
     // 3. Live Game State (Read by everyone, written by Admin only)
@@ -40,9 +53,17 @@ service cloud.firestore {
 
     // 4. Seat Claims verification (Anyone can verify a claim, but ONLY if the PIN matches)
     match /artifacts/{appId}/public/data/playerClaims/{playerId} {
-      allow read, delete: if isAdmin();
+      allow read: if true; // Let everyone read claim status to check if a seat is taken or player is logged in
+      allow delete: if isAdmin();
       allow create, update: if request.auth != null 
                             && request.resource.data.pin == getPlayerPin(playerId);
+    }
+
+    // 4b. Player Declarations (Read by anyone, writeable if Admin or player claim PIN matches private PIN)
+    match /artifacts/{appId}/public/data/playerDeclarations/{playerId} {
+      allow read: if true;
+      allow write: if isAdmin() || (request.auth != null 
+                    && getPlayerPin(playerId) == get(/databases/$(database)/documents/artifacts/$(appId)/public/data/playerClaims/$(playerId)).data.pin);
     }
 
     // 5. Live Game Commands (Anyone can submit a turn action, but ONLY if the PIN matches)
