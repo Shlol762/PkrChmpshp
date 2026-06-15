@@ -59,7 +59,7 @@ export function calculatePaydays(dayNumber, config, rawBalances, loans) {
   return paydays;
 }
 
-export function calculatePlayerStats(sessions, loans, currentDay, config) {
+export function calculatePlayerStats(sessions, loans, currentDay, config, balances = {}) {
   const completedSessions = sessions.filter(s => s.status !== 'active');
   const latestSession = completedSessions.length > 0 ? completedSessions[0] : null;
 
@@ -78,8 +78,8 @@ export function calculatePlayerStats(sessions, loans, currentDay, config) {
 
   return config.players.map(player => {
     const currentTableBalance =
-      latestSession?.balances?.[player.id] !== undefined
-        ? Number(latestSession.balances[player.id])
+      balances[player.id] !== undefined
+        ? Number(balances[player.id])
         : Number(player.startBalance || 0);
 
     const expectedBreakEven = Number(player.startBalance || 0) + totalPaydays[player.id];

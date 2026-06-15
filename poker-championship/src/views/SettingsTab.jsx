@@ -1,4 +1,4 @@
-import { Lock, Settings, Check, Users, Plus, Trash2 } from 'lucide-react';
+import { Lock, Settings, Check, Users, Plus, Trash2, Dices } from 'lucide-react';
 
 
 export default function SettingsTab({
@@ -9,7 +9,10 @@ export default function SettingsTab({
   handlePlayerChange,
   addPlayer,
   removePlayer,
-  saveSettings
+  saveSettings,
+  balancesDraft = {},
+  handleBalanceDraftChange,
+  saveBalances
 }) {
   if (!isAuthenticated) {
     return (
@@ -39,7 +42,7 @@ export default function SettingsTab({
           className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2.5 px-5 rounded-xl transition-all shadow-[0_0_20px_rgba(37,99,235,0.2)]"
         >
           <Check className="h-5 w-5" />
-          <span className="hidden sm:inline">Save</span>
+          <span className="hidden sm:inline">Save Settings</span>
         </button>
       </div>
 
@@ -133,6 +136,40 @@ export default function SettingsTab({
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Manual Recount / Balance Adjustment Column */}
+        <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-6 lg:col-span-3">
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <Dices className="w-5 h-5 text-emerald-500" /> Manual Recount / Balance Adjustment
+            </h3>
+            <button
+              onClick={saveBalances}
+              className="flex items-center gap-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-lg transition-colors shadow-[0_0_15px_rgba(16,185,129,0.2)]"
+            >
+              <Check className="w-4 h-4" /> Save Balances
+            </button>
+          </div>
+          <p className="text-xs text-zinc-500 mb-4">
+            Directly adjust the current physical chip counts. Updates here will overwrite the active totals without modifying historical session data.
+          </p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            {settingsDraft.players.map((p) => (
+              <div key={p.id} className="flex justify-between items-center bg-zinc-950/50 p-3 rounded-xl border border-white/5">
+                <span className="text-zinc-300 font-medium text-sm">{p.name}</span>
+                <div className="w-32 flex items-center bg-zinc-900 rounded-lg border border-white/5 px-2 focus-within:border-emerald-500/50 transition-colors">
+                  <span className="text-zinc-500 text-xs">$</span>
+                  <input
+                    type="number"
+                    value={balancesDraft[p.id] ?? ''}
+                    onChange={e => handleBalanceDraftChange(p.id, e.target.value)}
+                    className="w-full bg-transparent p-2 text-white font-mono text-sm focus:outline-none text-right"
+                  />
+                </div>
               </div>
             ))}
           </div>

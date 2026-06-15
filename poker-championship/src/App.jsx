@@ -43,6 +43,10 @@ export default function App() {
   const [playerDeclarations, setPlayerDeclarations] = useState({});
   const [loading, setLoading]     = useState(true);
 
+  const [balances, setBalances]           = useState({});
+  const [balancesDraft, setBalancesDraft] = useState({});
+  const [balancesLoaded, setBalancesLoaded] = useState(false);
+
   const [config, setConfig]               = useState(DEFAULT_CONFIG);
   const [settingsDraft, setSettingsDraft] = useState(DEFAULT_CONFIG);
 
@@ -94,6 +98,7 @@ export default function App() {
     const loansRef    = collection(db, 'artifacts', safeAppId, 'public', 'data', 'loans');
     const liveGameRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGame', 'main');
     const declarationsRef = collection(db, 'artifacts', safeAppId, 'public', 'data', 'playerDeclarations');
+    const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
 
     const unsubConfig = onSnapshot(configRef, snap => {
       if (snap.exists()) {
@@ -134,7 +139,18 @@ export default function App() {
       setPlayerDeclarations(data);
     }, err => console.error('Declarations fetch error:', err));
 
-    return () => { unsubConfig(); unsubSessions(); unsubLoans(); unsubLiveGame(); unsubDeclarations(); };
+    const unsubBalances = onSnapshot(balancesRef, snap => {
+      if (snap.exists()) {
+        setBalances(snap.data());
+        setBalancesDraft(snap.data());
+      } else {
+        setBalances({});
+        setBalancesDraft({});
+      }
+      setBalancesLoaded(true);
+    }, err => console.error('Balances fetch error:', err));
+
+    return () => { unsubConfig(); unsubSessions(); unsubLoans(); unsubLiveGame(); unsubDeclarations(); unsubBalances(); };
   }, [user]);
 
   // Fetch private PINs when admin is authenticated
@@ -166,10 +182,42 @@ export default function App() {
     fetchPins();
   }, [isAuthenticated, config.players]);
 
+  // ── Auto-Migration ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (loading || !balancesLoaded || !user) return;
+
+    const runMigration = async () => {
+      if (Object.keys(balances).length > 0) return;
+
+      const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
+      const completedSessions = sessions.filter(s => s.status !== 'active');
+      const latestSession = completedSessions.length > 0 ? completedSessions[0] : null;
+
+      const initialBalances = {};
+      config.players.forEach(p => {
+        initialBalances[p.id] =
+          latestSession?.balances?.[p.id] !== undefined
+            ? Number(latestSession.balances[p.id])
+            : Number(p.startBalance || 0);
+      });
+
+      try {
+        await setDoc(balancesRef, initialBalances);
+        console.log("Migration complete: Initialized central balances document with:", initialBalances);
+      } catch (err) {
+        console.error("Migration error:", err);
+      }
+    };
+
+    if (Object.keys(balances).length === 0 && config.players.length > 0) {
+      runMigration();
+    }
+  }, [loading, balancesLoaded, balances, sessions, config, user]);
+
   // Calculations derived from state (pure computations using utils)
   const playerStats = useMemo(() => {
-    return calculatePlayerStats(sessions, loans, currentDay, config);
-  }, [sessions, loans, currentDay, config]);
+    return calculatePlayerStats(sessions, loans, currentDay, config, balances);
+  }, [sessions, loans, currentDay, config, balances]);
 
   const actualSystemNetWorth = useMemo(() => {
     return playerStats.reduce((sum, p) => sum + p.netWorth, 0);
@@ -250,17 +298,15 @@ export default function App() {
     try {
       const nextDay = activeSession.dayNumber;
       
-      // 1. Compile raw final balances from ledgerDraft
+      // 1. Compile raw final balances from ledgerDraft using central balances
       const rawBalances = {};
       config.players.forEach(p => {
         const draft = ledgerDraft[p.id];
         if (draft && draft.played) {
-          const latestSession = sessions.find(s => s.id !== activeSession.id && s.status !== 'active');
-          const prevBal = latestSession?.balances?.[p.id] ?? Number(p.startBalance || 0);
+          const prevBal = balances[p.id] ?? Number(p.startBalance || 0);
           rawBalances[p.id] = prevBal - draft.buyIn - draft.rebuys + draft.cashOut;
         } else {
-          const latestSession = sessions.find(s => s.id !== activeSession.id && s.status !== 'active');
-          const prevBal = latestSession?.balances?.[p.id] ?? Number(p.startBalance || 0);
+          const prevBal = balances[p.id] ?? Number(p.startBalance || 0);
           rawBalances[p.id] = prevBal;
         }
       });
@@ -298,6 +344,10 @@ export default function App() {
         recordedAt: new Date().toISOString(),
         recordedBy: user.uid
       });
+
+      // 5. Update central balances document
+      const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
+      await setDoc(balancesRef, finalBalances);
 
       // 5. Clean up temporary playerClaims and playerDeclarations
       for (const p of config.players) {
@@ -381,12 +431,11 @@ export default function App() {
       setSessionDraft(draft);
     } else {
       setEditingSessionId(null);
-      const latestSession = sessions.length > 0 ? sessions[0] : null;
       const nextDay = currentDay + 1;
 
       const draft = {};
       config.players.forEach(p => {
-        const lastKnownBalance = latestSession?.balances?.[p.id] ?? Number(p.startBalance || 0);
+        const lastKnownBalance = balances[p.id] ?? Number(p.startBalance || 0);
         draft[p.id] = lastKnownBalance;
       });
 
@@ -427,6 +476,11 @@ export default function App() {
           recordedBy:  user.uid,
         });
       }
+
+      // Update central balances document
+      const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
+      await setDoc(balancesRef, finalBalances);
+
       setShowSessionModal(false);
     } catch (err) { console.error('Error saving session:', err); }
   };
@@ -450,22 +504,18 @@ export default function App() {
         ...loanDraft, status: 'active', recordedAt: new Date().toISOString(), recordedBy: user.uid,
       });
 
-      // 2. Immediately adjust physical table chips in the latest completed session
-      if (sessions.length > 0) {
-        const latestSession = sessions[0];
-        if (latestSession.status !== 'active') {
-          const newBalances = { ...latestSession.balances };
-          const principal = Number(loanDraft.amount);
+      // 2. Adjust physical table chips in the central balances
+      const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
+      const newBalances = { ...balances };
+      const principal = Number(loanDraft.amount);
 
-          const borrowerBal = newBalances[loanDraft.borrower] ?? Number(config.players.find(p => p.id === loanDraft.borrower)?.startBalance || 0);
-          const lenderBal   = newBalances[loanDraft.lender] ?? Number(config.players.find(p => p.id === loanDraft.lender)?.startBalance || 0);
+      const borrowerBal = newBalances[loanDraft.borrower] ?? Number(config.players.find(p => p.id === loanDraft.borrower)?.startBalance || 0);
+      const lenderBal   = newBalances[loanDraft.lender] ?? Number(config.players.find(p => p.id === loanDraft.lender)?.startBalance || 0);
 
-          newBalances[loanDraft.borrower] = borrowerBal + principal;
-          newBalances[loanDraft.lender]   = lenderBal - principal;
+      newBalances[loanDraft.borrower] = borrowerBal + principal;
+      newBalances[loanDraft.lender]   = lenderBal - principal;
 
-          await updateDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'sessions', latestSession.id), { balances: newBalances });
-        }
-      }
+      await setDoc(balancesRef, newBalances);
 
       setShowLoanModal(false);
     } catch (err) {
@@ -485,30 +535,49 @@ export default function App() {
         settledDay: isSettling ? currentDay : null,
       });
 
-      if (sessions.length > 0) {
-        const latestSession = sessions[0];
-        if (latestSession.status !== 'active') {
-          const newBalances = { ...latestSession.balances };
-          const borrowerBal = newBalances[loan.borrower] ?? Number(config.players.find(p=>p.id===loan.borrower)?.startBalance || 0);
-          const lenderBal   = newBalances[loan.lender] ?? Number(config.players.find(p=>p.id===loan.lender)?.startBalance || 0);
+      // Adjust physical table chips in the central balances
+      const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
+      const newBalances = { ...balances };
+      const borrowerBal = newBalances[loan.borrower] ?? Number(config.players.find(p=>p.id===loan.borrower)?.startBalance || 0);
+      const lenderBal   = newBalances[loan.lender] ?? Number(config.players.find(p=>p.id===loan.lender)?.startBalance || 0);
 
-          if (isSettling) {
-            newBalances[loan.borrower] = borrowerBal - repayAmount;
-            newBalances[loan.lender]   = lenderBal + repayAmount;
-          } else {
-            newBalances[loan.borrower] = borrowerBal + repayAmount;
-            newBalances[loan.lender]   = lenderBal - repayAmount;
-          }
-
-          await updateDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'sessions', latestSession.id), { balances: newBalances });
-        }
+      if (isSettling) {
+        newBalances[loan.borrower] = borrowerBal - repayAmount;
+        newBalances[loan.lender]   = lenderBal + repayAmount;
+      } else {
+        newBalances[loan.borrower] = borrowerBal + repayAmount;
+        newBalances[loan.lender]   = lenderBal - repayAmount;
       }
+
+      await setDoc(balancesRef, newBalances);
     } catch (err) { console.error('Error updating loan:', err); }
   };
 
   const getPlayerName = id => config.players.find(p => p.id === id)?.name || id;
 
-  if (loading || !user) {
+  const handleBalanceDraftChange = (playerId, val) => {
+    setBalancesDraft(prev => ({ ...prev, [playerId]: val === '' ? '' : Number(val) }));
+  };
+
+  const saveBalances = async () => {
+    if (!user) return;
+    try {
+      const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
+      
+      const cleanedBalances = {};
+      Object.entries(balancesDraft).forEach(([pid, val]) => {
+        cleanedBalances[pid] = Number(val) || 0;
+      });
+
+      await setDoc(balancesRef, cleanedBalances);
+      alert("Current balances updated successfully!");
+    } catch (err) {
+      console.error("Error saving balances:", err);
+      alert("Failed to save balances.");
+    }
+  };
+
+  if (loading || !balancesLoaded || !user) {
     return (
       <div className="flex h-screen items-center justify-center bg-[#09090b] text-zinc-200">
         <div className="animate-pulse flex flex-col items-center">
@@ -688,6 +757,9 @@ export default function App() {
                 addPlayer={addPlayer}
                 removePlayer={removePlayer}
                 saveSettings={saveSettings}
+                balancesDraft={balancesDraft}
+                handleBalanceDraftChange={handleBalanceDraftChange}
+                saveBalances={saveBalances}
               />
             )}
  
