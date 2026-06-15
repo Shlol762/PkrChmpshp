@@ -27,6 +27,10 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isAdmin();
     }
+    match /artifacts/{appId}/public/data/balances/{docId} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
     match /artifacts/{appId}/public/data/loans/{docId} {
       allow read: if true;
       allow write: if isAdmin() || (
