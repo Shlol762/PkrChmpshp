@@ -261,6 +261,26 @@ export default function StatsTab({ config, sessions, loans }) {
     return chartHeight - margin.bottom - ((val - yMin) / (yMax - yMin)) * (chartHeight - margin.top - margin.bottom);
   };
 
+  // Bezier path generator for smooth curve interpolation (tension 0.2)
+  const getBezierPath = (points, tension = 0.2) => {
+    if (points.length < 2) return '';
+    let path = `M ${points[0].x},${points[0].y}`;
+    for (let i = 0; i < points.length - 1; i++) {
+      const p0 = points[i - 1] || points[i];
+      const p1 = points[i];
+      const p2 = points[i + 1];
+      const p3 = points[i + 2] || p2;
+
+      const cp1x = p1.x + (p2.x - p0.x) * tension;
+      const cp1y = p1.y + (p2.y - p0.y) * tension;
+      const cp2x = p2.x - (p3.x - p1.x) * tension;
+      const cp2y = p2.y - (p3.y - p1.y) * tension;
+
+      path += ` C ${cp1x},${cp1y} ${cp2x},${cp2y} ${p2.x},${p2.y}`;
+    }
+    return path;
+  };
+
   // Sparkline builder for table rows
   const getSparklinePath = (history) => {
     if (history.length < 2) return '';
@@ -277,10 +297,10 @@ export default function StatsTab({ config, sessions, loans }) {
     const points = history.map(h => {
       const x = ((h.dayNumber - spMinD) / (spMaxD - spMinD)) * spW;
       const y = spH - ((h.profit - spMinP) / spPDiff) * spH;
-      return `${x},${y}`;
+      return { x, y };
     });
 
-    return `M ${points.join(' L ')}`;
+    return getBezierPath(points, 0.2);
   };
 
   // Handle chart hover
@@ -397,15 +417,7 @@ export default function StatsTab({ config, sessions, loans }) {
             onMouseMove={handleMouseMove}
             onMouseLeave={handleMouseLeave}
           >
-            {/* Definitions for gradients */}
-            <defs>
-              {playerStats.map(ps => (
-                <linearGradient key={`grad-${ps.id}`} id={`grad-${ps.id}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={ps.color} stopOpacity="0.25" />
-                  <stop offset="100%" stopColor={ps.color} stopOpacity="0.0" />
-                </linearGradient>
-              ))}
-            </defs>
+
 
             {/* Grid Lines */}
             {Array.from({ length: 5 }).map((_, i) => {
@@ -462,23 +474,12 @@ export default function StatsTab({ config, sessions, loans }) {
             {playerStats.map(ps => {
               if (!visiblePlayers[ps.id]) return null;
 
-              // Generate line path coordinates
-              const points = ps.history.map(h => `${getX(h.dayNumber)},${getY(h.profit)}`);
-              const linePath = `M ${points.join(' L ')}`;
-
-              // Area path for gradient fill
-              const xStart = getX(0);
-              const xEnd = getX(maxDay);
-              const yZero = getY(0);
-              const areaPath = `${linePath} L ${xEnd},${chartHeight - margin.bottom} L ${xStart},${chartHeight - margin.bottom} Z`;
+              // Generate line path coordinates using smooth bezier curve
+              const points = ps.history.map(h => ({ x: getX(h.dayNumber), y: getY(h.profit) }));
+              const linePath = getBezierPath(points, 0.2);
 
               return (
                 <g key={`line-group-${ps.id}`}>
-                  {/* Shaded Area Under Line */}
-                  <path 
-                    d={areaPath} 
-                    fill={`url(#grad-${ps.id})`} 
-                  />
                   {/* Main Stroke Line */}
                   <path 
                     d={linePath} 
