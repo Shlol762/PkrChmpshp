@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { doc, setDoc, addDoc, collection, updateDoc } from 'firebase/firestore';
+import { doc, setDoc, addDoc, collection, updateDoc, getDoc } from 'firebase/firestore';
 import { db, safeAppId } from '../firebase';
 import { 
   User, 
@@ -290,6 +290,21 @@ export default function PlayerDashboardTab({
       await updateDoc(sessionRef, {
         status: 'active'
       });
+
+      // Adjust physical table chips in central balances
+      const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
+      const balancesSnap = await getDoc(balancesRef);
+      const newBalances = balancesSnap.exists() ? { ...balancesSnap.data() } : {};
+      const principal = Number(loan.amount);
+
+      const borrowerBal = newBalances[loan.borrower] ?? Number(config.players.find(p => p.id === loan.borrower)?.startBalance || 0);
+      const lenderBal   = newBalances[loan.lender] ?? Number(config.players.find(p => p.id === loan.lender)?.startBalance || 0);
+
+      newBalances[loan.borrower] = borrowerBal + principal;
+      newBalances[loan.lender]   = lenderBal - principal;
+
+      await setDoc(balancesRef, newBalances);
+
       triggerMessage('success', 'Loan approved and is now active!');
     } catch (err) {
       console.error(err);
@@ -329,9 +344,25 @@ export default function PlayerDashboardTab({
         status: 'settled',
         settledDay: Number(activeSession?.dayNumber || currentDay)
       });
+
+      // Adjust physical table chips in central balances
+      const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
+      const balancesSnap = await getDoc(balancesRef);
+      const newBalances = balancesSnap.exists() ? { ...balancesSnap.data() } : {};
+      const repayAmount = repaymentAmount(loan);
+
+      const borrowerBal = newBalances[loan.borrower] ?? Number(config.players.find(p => p.id === loan.borrower)?.startBalance || 0);
+      const lenderBal   = newBalances[loan.lender] ?? Number(config.players.find(p => p.id === loan.lender)?.startBalance || 0);
+
+      newBalances[loan.borrower] = borrowerBal - repayAmount;
+      newBalances[loan.lender]   = lenderBal + repayAmount;
+
+      await setDoc(balancesRef, newBalances);
+
       triggerMessage('success', 'Loan marked as settled!');
     } catch (err) {
       console.error(err);
+      triggerMessage('error', 'Failed to settle loan.');
     }
   };
 

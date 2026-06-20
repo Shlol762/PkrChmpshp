@@ -29,7 +29,7 @@ export function calculatePaydays(dayNumber, config, rawBalances, loans) {
     let lentOut = 0;
     let borrowed = 0;
     loans.forEach(loan => {
-      if (loan.status !== 'active') return;
+      if (loan.status !== 'active' && loan.status !== 'pending_settlement') return;
       const principal = Number(loan.amount);
       const interest = repaymentAmount(loan) - principal;
       if (loan.lender === p.id) lentOut += (principal + interest);
@@ -82,16 +82,13 @@ export function calculatePlayerStats(sessions, loans, currentDay, config, balanc
         ? Number(balances[player.id])
         : Number(player.startBalance || 0);
 
-    const expectedBreakEven = Number(player.startBalance || 0) + totalPaydays[player.id];
-    const tablePL = currentTableBalance - expectedBreakEven;
-
     let lentOutPrincipal  = 0;
     let lentOutInterest   = 0;
     let borrowedPrincipal = 0;
     let borrowedInterest  = 0;
 
     loans.forEach(loan => {
-      if (loan.status !== 'active') return;
+      if (loan.status !== 'active' && loan.status !== 'pending_settlement') return;
       const principal = Number(loan.amount);
       const interest = repaymentAmount(loan) - principal;
       if (loan.lender === player.id) {
@@ -103,6 +100,10 @@ export function calculatePlayerStats(sessions, loans, currentDay, config, balanc
         borrowedInterest += interest;
       }
     });
+
+    const expectedBreakEven = Number(player.startBalance || 0) + totalPaydays[player.id];
+    // Adjust the live balance to exclude active loan principal from P/L
+    const tablePL = (currentTableBalance - borrowedPrincipal + lentOutPrincipal) - expectedBreakEven;
 
     const netWorth = currentTableBalance + (lentOutPrincipal + lentOutInterest) - (borrowedPrincipal + borrowedInterest);
 
