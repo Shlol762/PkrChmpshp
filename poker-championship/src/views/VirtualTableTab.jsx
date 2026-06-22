@@ -12,7 +12,11 @@ import {
   Power,
   Users,
   Eye,
-  Info
+  Info,
+  Undo2,
+  SkipForward,
+  Target,
+  Pencil
 } from 'lucide-react';
 import {
   findNextActivePlayer,
@@ -25,7 +29,7 @@ import { calculatePaydays } from '../utils/pokerEngine';
 export default function VirtualTableTab({
   isAuthenticated,
   config,
-  liveGame,
+  liveGames,
   currentDay,
   sessions,
   loans,
@@ -33,6 +37,35 @@ export default function VirtualTableTab({
   setCurrentPlayerId,
   playerDeclarations
 }) {
+  const [activeTableId, setActiveTableId] = useState('main');
+  const [showManageTableModal, setShowManageTableModal] = useState(false);
+  const [showSplitModal, setShowSplitModal] = useState(false);
+
+  // Reposition mode: 'dealer' | 'acting' | null
+  const [repositionMode, setRepositionMode] = useState(null);
+  // Inline stack edit: { idx: number, value: string } | null
+  const [editingStack, setEditingStack] = useState(null);
+
+  const liveGame = liveGames?.[activeTableId];
+
+  const activeTables = useMemo(() => {
+    return Object.entries(liveGames || {})
+      .filter(([_, game]) => game && game.active)
+      .map(([id, game]) => ({ id, ...game }));
+  }, [liveGames]);
+
+  // Auto-select active table where current player is seated
+  useEffect(() => {
+    if (activeTables.length > 0 && !activeTables.some(t => t.id === activeTableId)) {
+      const playerTable = activeTables.find(t => t.players?.some(p => p.id === currentPlayerId));
+      if (playerTable) {
+        setActiveTableId(playerTable.id);
+      } else {
+        setActiveTableId(activeTables[0].id);
+      }
+    }
+  }, [activeTables, activeTableId, currentPlayerId]);
+
   // Setup local states for Seat Claiming
   const [claimPlayerId, setClaimPlayerId] = useState('');
   const [claimPin, setClaimPin] = useState('');
@@ -74,7 +107,7 @@ export default function VirtualTableTab({
   const [manualAdjustAmount, setManualAdjustAmount] = useState('');
   const [manualAdjustReason, setManualAdjustReason] = useState('Rebuy');
 
-  const gameDocRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGame', 'main');
+  const gameDocRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGame', activeTableId);
 
   // Derive active players list for setup
   const tablePlayers = useMemo(() => {
@@ -135,15 +168,236 @@ export default function VirtualTableTab({
     setWinnerPayouts(prev => ({ ...prev, [playerId]: val === '' ? '' : Number(val) }));
   };
 
-  // State update runner
-  const updateDbState = async (nextState) => {
-    const isMyTurn = liveGame && liveGame.active && liveGame.actingPlayerIndex !== -1 && 
-      (liveGame.players[liveGame.actingPlayerIndex]?.id === currentPlayerId);
+  // Helper to safely remove a player and adjust indexes
+  const removePlayerFromGame = (players, playerId, dealerIdx, actingIdx) => {
+    const idxToRemove = players.findIndex(p => p.id === playerId);
+    if (idxToRemove === -1) return { players, dealerIndex: dealerIdx, actingPlayerIndex: actingIdx };
+
+    const updatedPlayers = players.filter(p => p.id !== playerId);
+
+    let nextDealerIdx = dealerIdx;
+    if (nextDealerIdx >= updatedPlayers.length) {
+      nextDealerIdx = 0;
+    }
+
+    let nextActingIdx = actingIdx;
+    if (nextActingIdx === idxToRemove) {
+      if (updatedPlayers.length >= 2) {
+        nextActingIdx = findNextActivePlayer(idxToRemove % updatedPlayers.length, updatedPlayers);
+      } else {
+        nextActingIdx = -1;
+      }
+    } else if (nextActingIdx > idxToRemove) {
+      nextActingIdx -= 1;
+    }
+
+    return { players: updatedPlayers, dealerIndex: nextDealerIdx, actingPlayerIndex: nextActingIdx };
+  };
+
+  // Admin function: Swap a player from their current table to a target table
+  const handleTableSwap = async (playerId, targetTableId) => {
+    if (!isAuthenticated || !liveGames) return;
+
+    let currentTableId = null;
+    let playerObj = null;
+
+    Object.entries(liveGames).forEach(([tId, game]) => {
+      if (!game || !game.active || !game.players) return;
+      const found = game.players.find(p => p.id === playerId);
+      if (found) {
+        currentTableId = tId;
+        playerObj = found;
+      }
+    });
+
+    if (currentTableId === targetTableId) return;
+
+    try {
+      let stack = 0;
+      let dec = playerDeclarations?.[playerId];
+      if (playerObj) {
+        stack = playerObj.stack;
+      } else if (dec) {
+        stack = Number(dec.buyIn || 0) + Number(dec.rebuys || 0);
+      } else {
+        const baseline = sessions?.[0]?.balances?.[playerId] ?? config.players.find(p => p.id === playerId)?.startBalance ?? 0;
+        stack = Number(baseline);
+      }
+
+      // 1. Remove from current table if they were on one
+      if (currentTableId) {
+        const currentGame = liveGames[currentTableId];
+        const removeResult = removePlayerFromGame(currentGame.players, playerId, currentGame.dealerIndex, currentGame.actingPlayerIndex);
+        
+        const nextProcessed = { ...(currentGame.processedDeclarations || {}) };
+        delete nextProcessed[playerId];
+
+        const logMsg = `[Table Swap] ${playerObj.name} moved their seat to Table ${targetTableId === 'main' ? '1' : targetTableId.split('_')[1] || targetTableId}.`;
+
+        await setDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGame', currentTableId), {
+          ...currentGame,
+          players: removeResult.players,
+          dealerIndex: removeResult.dealerIndex,
+          actingPlayerIndex: removeResult.actingPlayerIndex,
+          processedDeclarations: nextProcessed,
+          history: [...(currentGame.history || []), logMsg],
+          lastUpdated: new Date().toISOString()
+        });
+      }
+
+      // 2. Add to target table
+      const targetGame = liveGames[targetTableId];
+      const updatedTargetPlayers = [...(targetGame.players || [])];
+      
+      const isHandRunning = targetGame.stage !== 'SETUP' && targetGame.stage !== 'SHOWDOWN';
+      const playerDetails = config.players.find(p => p.id === playerId);
+      const name = playerDetails?.name || playerId;
+
+      const newPlayer = {
+        id: playerId,
+        name: name,
+        stack: stack,
+        currentBet: 0,
+        totalHandInvestment: 0,
+        folded: isHandRunning,
+        isAllIn: false,
+        outOfChips: false,
+        hasActed: isHandRunning
+      };
+
+      updatedTargetPlayers.push(newPlayer);
+
+      const nextTargetProcessed = { ...(targetGame.processedDeclarations || {}) };
+      nextTargetProcessed[playerId] = {
+        buyIn: dec?.buyIn !== undefined ? Number(dec.buyIn) : stack,
+        rebuys: dec?.rebuys !== undefined ? Number(dec.rebuys) : 0
+      };
+
+      const joinMsg = `[Table Swap] ${name} joined from Table ${currentTableId === 'main' ? '1' : (currentTableId?.split('_')[1] || 'None')} with ${stack.toLocaleString()} chips.`;
+
+      await setDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGame', targetTableId), {
+        ...targetGame,
+        players: updatedTargetPlayers,
+        processedDeclarations: nextTargetProcessed,
+        history: [...(targetGame.history || []), joinMsg],
+        lastUpdated: new Date().toISOString()
+      });
+
+    } catch (err) {
+      console.error("Error swapping tables:", err);
+    }
+  };
+
+  // Admin function: Split current table, moving selected players to a target table
+  const handleSplitTable = async (playerIdsToMove, targetTableId) => {
+    if (!liveGame || playerIdsToMove.length === 0) return;
+
+    try {
+      const playersToMove = liveGame.players.filter(p => playerIdsToMove.includes(p.id));
+      const remainingPlayers = liveGame.players.filter(p => !playerIdsToMove.includes(p.id));
+
+      if (remainingPlayers.length < 1) {
+        alert("You cannot move all players. At least 1 player must remain at the current table.");
+        return;
+      }
+
+      // 1. Create target table state
+      const targetGame = {
+        active: true,
+        handNumber: 1,
+        stage: 'SETUP',
+        dealerIndex: 0,
+        smallBlind: liveGame.smallBlind || 10,
+        bigBlind: liveGame.bigBlind || 50,
+        pot: 0,
+        highestBet: 0,
+        previousHighestBet: 0,
+        actingPlayerIndex: -1,
+        players: playersToMove.map(p => ({
+          ...p,
+          currentBet: 0,
+          totalHandInvestment: 0,
+          folded: false,
+          isAllIn: false,
+          outOfChips: false,
+          hasActed: false
+        })),
+        processedDeclarations: playersToMove.reduce((acc, p) => {
+          acc[p.id] = liveGame.processedDeclarations?.[p.id] || { buyIn: p.stack, rebuys: 0 };
+          return acc;
+        }, {}),
+        history: [`Table split from Table ${activeTableId === 'main' ? '1' : activeTableId.split('_')[1] || activeTableId}. Started with players: ${playersToMove.map(p => p.name).join(', ')}.`],
+        lastUpdated: new Date().toISOString()
+      };
+
+      const targetRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGame', targetTableId);
+      await setDoc(targetRef, targetGame);
+
+      // 2. Update current table
+      let nextDealerIndex = liveGame.dealerIndex;
+      let nextActingPlayerIndex = liveGame.actingPlayerIndex;
+      let updatedCurrentPlayers = [...liveGame.players];
+
+      const currentProcessed = { ...(liveGame.processedDeclarations || {}) };
+
+      playersToMove.forEach(p => {
+        const removeResult = removePlayerFromGame(updatedCurrentPlayers, p.id, nextDealerIndex, nextActingPlayerIndex);
+        updatedCurrentPlayers = removeResult.players;
+        nextDealerIndex = removeResult.dealerIndex;
+        nextActingPlayerIndex = removeResult.actingPlayerIndex;
+        delete currentProcessed[p.id];
+      });
+
+      const logMsg = `Table split: moved ${playersToMove.map(p => p.name).join(', ')} to Table ${targetTableId.split('_')[1] || targetTableId}.`;
+
+      await setDoc(gameDocRef, {
+        ...liveGame,
+        players: updatedCurrentPlayers,
+        dealerIndex: nextDealerIndex,
+        actingPlayerIndex: nextActingPlayerIndex,
+        processedDeclarations: currentProcessed,
+        history: [...(liveGame.history || []), logMsg],
+        lastUpdated: new Date().toISOString()
+      });
+
+      setShowSplitModal(false);
+      setActiveTableId(targetTableId);
+      alert(`Successfully split table! Created Table ${targetTableId.split('_')[1] || targetTableId}.`);
+    } catch (err) {
+      console.error("Error splitting table:", err);
+      alert("Failed to split table.");
+    }
+  };
+
+  // ── State History Helpers ────────────────────────────────────────────────────
+  const MAX_HISTORY = 5;
+
+  // Returns a snapshot of currentState without the stateHistory array itself
+  const makeSnapshot = (game) => {
+    // eslint-disable-next-line no-unused-vars
+    const { stateHistory: _omit, ...rest } = game;
+    return rest;
+  };
+
+  // State update runner — always records a snapshot before writing
+  const updateDbState = async (nextState, targetTableId = activeTableId) => {
+    const game = liveGames[targetTableId];
+    const isMyTurn = game && game.active && game.actingPlayerIndex !== -1 && 
+      (game.players[game.actingPlayerIndex]?.id === currentPlayerId);
 
     if (!isAuthenticated && !isMyTurn) return;
     try {
-      await setDoc(gameDocRef, {
+      // Build new history (snapshot of the PRE-update state)
+      const prevSnapshot = game ? makeSnapshot(game) : null;
+      const currentHistory = game?.stateHistory || [];
+      const newHistory = prevSnapshot
+        ? [...currentHistory, prevSnapshot].slice(-MAX_HISTORY)
+        : currentHistory;
+
+      const targetDocRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGame', targetTableId);
+      await setDoc(targetDocRef, {
         ...nextState,
+        stateHistory: newHistory,
         lastUpdated: new Date().toISOString()
       });
     } catch (err) {
@@ -158,6 +412,7 @@ export default function VirtualTableTab({
     try {
       const commandsRef = collection(db, 'artifacts', safeAppId, 'public', 'data', 'liveGameCommands');
       await addDoc(commandsRef, {
+        tableId: activeTableId,
         playerId: currentPlayerId,
         action: actionType,
         payload: payload,
@@ -181,20 +436,37 @@ export default function VirtualTableTab({
 
   // Host processor listener: processes commands from the player queue
   useEffect(() => {
-    if (!isAuthenticated || !liveGame || !liveGame.active) return;
+    if (!isAuthenticated || !liveGames) return;
 
     const commandsRef = collection(db, 'artifacts', safeAppId, 'public', 'data', 'liveGameCommands');
     const unsub = onSnapshot(commandsRef, async (snap) => {
       const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      // Process in timestamp order
       docs.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
 
       for (const cmd of docs) {
-        if (actingPlayer && cmd.playerId === actingPlayer.id) {
-          // Process the action using host authentication
-          await handleAction(cmd.action, cmd.payload);
+        const cmdTableId = cmd.tableId || 'main';
+
+        if (cmd.action === 'SWAP_TABLE') {
+          const targetTableId = cmd.payload?.targetTableId;
+          if (targetTableId && liveGames[targetTableId]?.active) {
+            await handleTableSwap(cmd.playerId, targetTableId);
+          }
+          try {
+            await deleteDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGameCommands', cmd.id));
+          } catch (err) {
+            console.error("Error deleting command:", err);
+          }
+          continue;
         }
-        // Delete the command document so it is only processed once
+
+        const targetGame = liveGames[cmdTableId];
+        if (!targetGame || !targetGame.active) continue;
+
+        const actingPlayerForTable = targetGame.actingPlayerIndex !== -1 ? targetGame.players[targetGame.actingPlayerIndex] : null;
+
+        if (actingPlayerForTable && cmd.playerId === actingPlayerForTable.id) {
+          await handleAction(cmd.action, cmd.payload, cmdTableId);
+        }
         try {
           await deleteDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGameCommands', cmd.id));
         } catch (err) {
@@ -204,7 +476,216 @@ export default function VirtualTableTab({
     });
 
     return () => unsub();
-  }, [isAuthenticated, liveGame, actingPlayer]);
+  }, [isAuthenticated, liveGames]);
+
+  // Host auto-sync declarations & player leaves/joins
+  useEffect(() => {
+    if (!isAuthenticated || !liveGames) return;
+
+    // Gather all player IDs currently seated in ANY active table
+    const allSeatedPlayerIds = new Set();
+    Object.values(liveGames).forEach(game => {
+      if (game && game.active && game.players) {
+        game.players.forEach(p => allSeatedPlayerIds.add(p.id));
+      }
+    });
+
+    const tablesToUpdate = [];
+
+    Object.entries(liveGames).forEach(([tableId, game]) => {
+      if (!game || !game.active || !game.players) return;
+
+      let changed = false;
+      let updatedPlayers = game.players.map(p => ({ ...p }));
+      let nextDealerIndex = game.dealerIndex;
+      let nextActingPlayerIndex = game.actingPlayerIndex;
+      const processed = { ...(game.processedDeclarations || {}) };
+
+      const playerIdsInGame = new Set(updatedPlayers.map(p => p.id));
+
+      // Remove players who are cashed out
+      const remainingPlayersAtTable = [];
+      updatedPlayers.forEach(p => {
+        const dec = playerDeclarations?.[p.id];
+        const isCashedOut = dec?.status === 'cashed_out';
+
+        if (isCashedOut) {
+          const removeResult = removePlayerFromGame(updatedPlayers, p.id, nextDealerIndex, nextActingPlayerIndex);
+          updatedPlayers = removeResult.players;
+          nextDealerIndex = removeResult.dealerIndex;
+          nextActingPlayerIndex = removeResult.actingPlayerIndex;
+
+          if (processed[p.id]) {
+            delete processed[p.id];
+          }
+          changed = true;
+
+          const logMsg = `[Auto-Leave] ${p.name} left the table (Cashed out on dashboard).`;
+          game.history = [...(game.history || []), logMsg];
+        } else {
+          remainingPlayersAtTable.push(p);
+        }
+      });
+
+      // Update stacks for remaining players
+      updatedPlayers.forEach(p => {
+        const dec = playerDeclarations?.[p.id];
+        if (!dec) return;
+
+        const oldBuyIn = Number(processed[p.id]?.buyIn || 0);
+        const oldRebuys = Number(processed[p.id]?.rebuys || 0);
+        const newBuyIn = Number(dec.buyIn || 0);
+        const newRebuys = Number(dec.rebuys || 0);
+
+        const diff = (newBuyIn + newRebuys) - (oldBuyIn + oldRebuys);
+        if (diff > 0) {
+          p.stack = Number(p.stack || 0) + diff;
+          p.outOfChips = p.stack <= 0;
+          
+          processed[p.id] = { buyIn: newBuyIn, rebuys: newRebuys };
+          changed = true;
+
+          const logMsg = `[Auto-Rebuy] ${p.name} stack increased by ${diff.toLocaleString()} chips (Dashboard sync).`;
+          game.history = [...(game.history || []), logMsg];
+        }
+      });
+
+      // Add new players who checked in
+      config.players.forEach(p => {
+        const dec = playerDeclarations?.[p.id];
+        if (tableId === 'main' && dec && dec.status === 'active' && dec.buyIn > 0 && !allSeatedPlayerIds.has(p.id)) {
+          const startingStack = Number(dec.buyIn || 0) + Number(dec.rebuys || 0);
+          const isHandRunning = game.stage !== 'SETUP' && game.stage !== 'SHOWDOWN';
+          
+          const newPlayer = {
+            id: p.id,
+            name: p.name,
+            stack: startingStack,
+            currentBet: 0,
+            totalHandInvestment: 0,
+            folded: isHandRunning,
+            isAllIn: false,
+            outOfChips: false,
+            hasActed: isHandRunning
+          };
+
+          updatedPlayers.push(newPlayer);
+          processed[p.id] = { buyIn: Number(dec.buyIn), rebuys: Number(dec.rebuys) };
+          changed = true;
+
+          const logMsg = `[Auto-Join] ${p.name} joined the table with ${startingStack.toLocaleString()} chips (Dashboard sync).`;
+          game.history = [...(game.history || []), logMsg];
+        }
+      });
+
+      if (changed) {
+        tablesToUpdate.push({
+          tableId,
+          nextState: {
+            ...game,
+            players: updatedPlayers,
+            dealerIndex: nextDealerIndex,
+            actingPlayerIndex: nextActingPlayerIndex,
+            processedDeclarations: processed
+          }
+        });
+      }
+    });
+
+    tablesToUpdate.forEach(async ({ tableId, nextState }) => {
+      try {
+        const targetDocRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGame', tableId);
+        await setDoc(targetDocRef, {
+          ...nextState,
+          lastUpdated: new Date().toISOString()
+        });
+      } catch (err) {
+        console.error("Error auto-syncing declarations:", err);
+      }
+    });
+
+  }, [isAuthenticated, liveGames, playerDeclarations, config.players]);
+
+  // ── Host Override Actions ────────────────────────────────────────────────────
+
+  // Undo: restore last snapshot from stateHistory
+  const handleUndo = async () => {
+    if (!liveGame || !isAuthenticated) return;
+    const history = liveGame.stateHistory || [];
+    if (history.length === 0) {
+      alert('No previous state to undo to.');
+      return;
+    }
+    const prevState = history[history.length - 1];
+    const newHistory = history.slice(0, -1);
+    try {
+      const targetDocRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGame', activeTableId);
+      await setDoc(targetDocRef, {
+        ...prevState,
+        stateHistory: newHistory,
+        lastUpdated: new Date().toISOString()
+      });
+    } catch (err) {
+      console.error('Undo error:', err);
+    }
+  };
+
+  // Skip Turn: advance actingPlayerIndex to next active player
+  const handleSkipTurn = async () => {
+    if (!liveGame || !isAuthenticated) return;
+    if (liveGame.actingPlayerIndex === -1) return;
+    const next = findNextActivePlayer(
+      (liveGame.actingPlayerIndex + 1) % liveGame.players.length,
+      liveGame.players
+    );
+    const logMsg = `[Host Override] Skipped ${liveGame.players[liveGame.actingPlayerIndex]?.name}'s turn.`;
+    await updateDbState({
+      ...liveGame,
+      actingPlayerIndex: next,
+      history: [...(liveGame.history || []), logMsg]
+    });
+  };
+
+  // Seat card click: handle reposition or inline stack edit start
+  const handleSeatCardClick = async (idx) => {
+    if (!isAuthenticated) return;
+    if (repositionMode === 'dealer') {
+      const logMsg = `[Host Override] Dealer button moved to ${liveGame.players[idx]?.name}.`;
+      await updateDbState({
+        ...liveGame,
+        dealerIndex: idx,
+        history: [...(liveGame.history || []), logMsg]
+      });
+      setRepositionMode(null);
+    } else if (repositionMode === 'acting') {
+      const logMsg = `[Host Override] Acting turn set to ${liveGame.players[idx]?.name}.`;
+      await updateDbState({
+        ...liveGame,
+        actingPlayerIndex: idx,
+        history: [...(liveGame.history || []), logMsg]
+      });
+      setRepositionMode(null);
+    }
+  };
+
+  // Inline stack edit save
+  const handleSaveStackEdit = async () => {
+    if (!liveGame || !isAuthenticated || !editingStack) return;
+    const { idx, value } = editingStack;
+    const newStack = Math.max(0, Number(value) || 0);
+    const player = liveGame.players[idx];
+    if (!player) return;
+    const logMsg = `[Manual Override] ${player.name}'s stack set to ${newStack.toLocaleString()} chips.`;
+    const updatedPlayers = liveGame.players.map((p, i) =>
+      i === idx ? { ...p, stack: newStack, outOfChips: newStack <= 0 } : p
+    );
+    await updateDbState({
+      ...liveGame,
+      players: updatedPlayers,
+      history: [...(liveGame.history || []), logMsg]
+    });
+    setEditingStack(null);
+  };
 
   // ── Actions ─────────────────────────────────────────────────────────────────
   
@@ -228,6 +709,15 @@ export default function VirtualTableTab({
       return;
     }
 
+    const processedDecs = {};
+    activeRoster.forEach(p => {
+      const dec = playerDeclarations?.[p.id];
+      processedDecs[p.id] = {
+        buyIn: dec?.buyIn !== undefined ? Number(dec.buyIn) : Number(startingStacks[p.id] || 0),
+        rebuys: dec?.rebuys !== undefined ? Number(dec.rebuys) : 0
+      };
+    });
+
     const dealerIdx = activeRoster.findIndex(p => p.id === initialDealerId);
     const finalDealerIdx = dealerIdx !== -1 ? dealerIdx : 0;
 
@@ -243,25 +733,35 @@ export default function VirtualTableTab({
       previousHighestBet: 0,
       actingPlayerIndex: -1,
       players: activeRoster,
+      processedDeclarations: processedDecs,
       history: ["Live game session started."]
     };
 
-    // Auto post blinds and trigger Hand #1
     const firstHandState = startNewHand(initialState);
     await updateDbState(firstHandState);
   };
 
-  const handleAction = async (actionType, payload = null) => {
-    const isMyTurn = currentPlayerId && actingPlayer && actingPlayer.id === currentPlayerId;
-    if (!liveGame || !actingPlayer || (!isAuthenticated && !isMyTurn)) return;
+  const handleAction = async (actionType, payload = null, targetTableId = activeTableId) => {
+    const game = liveGames[targetTableId];
+    if (!game || !game.active) return;
+    
+    if (game.actingPlayerIndex === undefined || game.actingPlayerIndex === -1) return;
+    const actPlayer = game.players[game.actingPlayerIndex];
+    if (!actPlayer) return;
 
-    const updatedPlayers = liveGame.players.map(p => ({ ...p }));
-    const player = updatedPlayers[liveGame.actingPlayerIndex];
-    let nextHighest = Number(liveGame.highestBet);
-    let nextPrevHighest = Number(liveGame.previousHighestBet);
+    const isMyTurn = currentPlayerId && actPlayer.id === currentPlayerId;
+    if (!isAuthenticated && !isMyTurn) return;
+
+    const updatedPlayers = game.players.map(p => ({ ...p }));
+    const player = updatedPlayers[game.actingPlayerIndex];
+    let nextHighest = Number(game.highestBet);
+    let nextPrevHighest = Number(game.previousHighestBet);
     let logMsg = "";
 
     player.hasActed = true;
+
+    const currentPot = (game.pot || 0) + game.players.reduce((sum, lp) => sum + (lp.currentBet || 0), 0);
+    const totalLivePotForTable = currentPot;
 
     if (actionType === 'FOLD') {
       player.folded = true;
@@ -273,7 +773,6 @@ export default function VirtualTableTab({
     else if (actionType === 'CALL') {
       const callAmount = nextHighest - player.currentBet;
       if (player.stack <= callAmount) {
-        // All-in Call
         const actualCall = player.stack;
         player.currentBet += actualCall;
         player.totalHandInvestment += actualCall;
@@ -292,7 +791,6 @@ export default function VirtualTableTab({
       const addedAmount = targetBet - player.currentBet;
 
       if (player.stack <= addedAmount) {
-        // All-in raise/bet
         const actualRaise = player.stack;
         player.currentBet += actualRaise;
         player.totalHandInvestment += actualRaise;
@@ -310,67 +808,58 @@ export default function VirtualTableTab({
         logMsg = `${player.name} raised to ${targetBet}.`;
       }
 
-      // Re-enable action for everyone else who is active (not folded/all-in)
       updatedPlayers.forEach((p, idx) => {
-        if (idx !== liveGame.actingPlayerIndex) {
+        if (idx !== game.actingPlayerIndex) {
           p.hasActed = false;
         }
       });
     }
 
-    // Check folded count
     const unfoldedPlayers = updatedPlayers.filter(p => !p.folded);
     if (unfoldedPlayers.length === 1) {
-      // Award pot to last player standing
       const winner = unfoldedPlayers[0];
-      const winPot = totalLivePot;
+      const winPot = totalLivePotForTable;
       winner.stack += winPot;
 
       const finishMsg = `${winner.name} won the pot of ${winPot.toLocaleString()} chips because everyone else folded.`;
       
       const nextHandState = startNewHand({
-        ...liveGame,
+        ...game,
         players: updatedPlayers,
-        history: [...liveGame.history, logMsg, finishMsg]
+        history: [...(game.history || []), logMsg, finishMsg]
       });
 
-      await updateDbState(nextHandState);
+      await updateDbState(nextHandState, targetTableId);
       return;
     }
 
-    // Find next player
-    let nextPlayerIdx = findNextActivePlayer((liveGame.actingPlayerIndex + 1) % updatedPlayers.length, updatedPlayers);
-
-    // If next player index is -1, it means everyone else is folded or all-in
-    // Or, if betting round is complete
+    let nextPlayerIdx = findNextActivePlayer((game.actingPlayerIndex + 1) % updatedPlayers.length, updatedPlayers);
     const isRoundComplete = isBettingRoundComplete(updatedPlayers, nextHighest);
 
     if (isRoundComplete) {
-      // Round is settled, wait for dealer to advance street
       await updateDbState({
-        ...liveGame,
+        ...game,
         players: updatedPlayers,
         highestBet: nextHighest,
         previousHighestBet: nextPrevHighest,
-        actingPlayerIndex: -1, // Wait for action
-        history: [...liveGame.history, logMsg]
-      });
+        actingPlayerIndex: -1,
+        history: [...(game.history || []), logMsg]
+      }, targetTableId);
     } else {
       await updateDbState({
-        ...liveGame,
+        ...game,
         players: updatedPlayers,
         highestBet: nextHighest,
         previousHighestBet: nextPrevHighest,
         actingPlayerIndex: nextPlayerIdx,
-        history: [...liveGame.history, logMsg]
-      });
+        history: [...(game.history || []), logMsg]
+      }, targetTableId);
     }
   };
 
   const handleProceedNextStreet = async () => {
     if (!liveGame || !isAuthenticated) return;
 
-    // Collect bets to pot
     const streetBets = liveGame.players.reduce((sum, p) => sum + (p.currentBet || 0), 0);
     const newPot = (liveGame.pot || 0) + streetBets;
 
@@ -380,19 +869,16 @@ export default function VirtualTableTab({
       hasActed: false
     }));
 
-    // Next Stage
     let nextStage = 'FLOP';
     if (liveGame.stage === 'PRE_FLOP') nextStage = 'FLOP';
     else if (liveGame.stage === 'FLOP') nextStage = 'TURN';
     else if (liveGame.stage === 'TURN') nextStage = 'RIVER';
     else if (liveGame.stage === 'RIVER') nextStage = 'SHOWDOWN';
 
-    // Find acting player (first active to left of dealer button)
     let nextActingIdx = -1;
     if (nextStage !== 'SHOWDOWN') {
       nextActingIdx = findNextActivePlayer((liveGame.dealerIndex + 1) % updatedPlayers.length, updatedPlayers);
       
-      // If there are no active players with chips (everyone else is all-in), go straight to Showdown!
       const activeChipsCount = updatedPlayers.filter(p => !p.folded && !p.isAllIn && !p.outOfChips).length;
       if (activeChipsCount <= 1) {
         nextStage = 'SHOWDOWN';
@@ -410,7 +896,7 @@ export default function VirtualTableTab({
       previousHighestBet: 0,
       actingPlayerIndex: nextActingIdx,
       players: updatedPlayers,
-      history: [...liveGame.history, logMsg]
+      history: [...(liveGame.history || []), logMsg]
     });
 
     setSelectedWinners([]);
@@ -445,7 +931,7 @@ export default function VirtualTableTab({
     const nextHandState = startNewHand({
       ...liveGame,
       players: updatedPlayers,
-      history: [...liveGame.history, `Showdown complete. ` + payoutLogs.join(', ') + '.']
+      history: [...(liveGame.history || []), `Showdown complete. ` + payoutLogs.join(', ') + '.']
     });
 
     await updateDbState(nextHandState);
@@ -477,7 +963,7 @@ export default function VirtualTableTab({
     await updateDbState({
       ...liveGame,
       players: updatedPlayers,
-      history: [...liveGame.history, logMsg]
+      history: [...(liveGame.history || []), logMsg]
     });
 
     setManualAdjustAmount('');
@@ -485,16 +971,22 @@ export default function VirtualTableTab({
   };
 
   const handleResetGame = async () => {
-    if (!window.confirm("Are you sure you want to reset the current Live Game? All current stacks and hand histories will be deleted.")) return;
+    if (!window.confirm(`Are you sure you want to reset/delete the current Table (${activeTableId === 'main' ? 'Table 1' : 'Table ' + activeTableId.split('_')[1]})? This will remove all stacks and hand history for this table.`)) return;
     try {
       await deleteDoc(gameDocRef);
+      const remaining = Object.keys(liveGames).filter(k => k !== activeTableId && liveGames[k]?.active);
+      if (remaining.length > 0) {
+        setActiveTableId(remaining[0]);
+      } else {
+        setActiveTableId('main');
+      }
     } catch (err) {
       console.error(err);
     }
   };
 
   const handleSaveToLedger = async () => {
-    if (!liveGame || !isAuthenticated) return;
+    if (!isAuthenticated || !liveGames) return;
 
     const latestSession = sessions && sessions.length > 0 ? sessions[0] : null;
     if (!latestSession || latestSession.status !== 'active') {
@@ -502,38 +994,40 @@ export default function VirtualTableTab({
       return;
     }
 
-    if (!window.confirm("End this Live Game and save the final player stacks as cash-out drafts?")) return;
+    if (!window.confirm("End all Live Table Games and save the final player stacks from all tables as cash-out drafts?")) return;
 
     try {
-      // Write draft cash-outs to playerDeclarations collection
-      for (const p of config.players) {
-        const liveP = liveGame.players.find(lp => lp.id === p.id);
-        if (liveP) {
-          const refundedStack = Number(liveP.stack || 0) + Number(liveP.totalHandInvestment || 0);
+      for (const [tableId, game] of Object.entries(liveGames)) {
+        if (!game || !game.active || !game.players) continue;
+
+        for (const p of game.players) {
+          const refundedStack = Number(p.stack || 0) + Number(p.currentBet || 0);
           const decRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'playerDeclarations', p.id);
-          
           const currentDec = playerDeclarations?.[p.id] || {};
+          
           await setDoc(decRef, {
-            buyIn: currentDec.buyIn !== undefined ? Number(currentDec.buyIn) : Number(startingStacks[p.id] || 0),
+            buyIn: currentDec.buyIn !== undefined ? Number(currentDec.buyIn) : Number(p.stack || 0),
             rebuys: currentDec.rebuys !== undefined ? Number(currentDec.rebuys) : 0,
             cashOut: refundedStack,
             status: 'cashed_out',
             timestamp: new Date().toISOString()
           });
         }
+
+        const targetDocRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGame', tableId);
+        await deleteDoc(targetDocRef);
       }
 
-      // Clear the live game state
-      await deleteDoc(gameDocRef);
-      alert(`Game ended successfully! Final stacks saved as cash-out drafts for Day ${latestSession.dayNumber}. Reconcile and commit the day in the Daily Ledger tab.`);
+      alert(`All active games ended successfully! Final stacks saved as cash-out drafts for Day ${latestSession.dayNumber}. Reconcile and commit the day in the Daily Ledger tab.`);
     } catch (err) {
-      console.error("Error saving live game to ledger:", err);
+      console.error("Error saving live games to ledger:", err);
       alert("Failed to save session to ledger.");
     }
   };
 
   // ── Rendering Setup Screen ──────────────────────────────────────────────────
-  if (!liveGame || !liveGame.active) {
+  const isAnyGameActive = activeTables.length > 0;
+  if (!isAnyGameActive) {
     return (
       <div className="space-y-6 animate-in fade-in duration-500 max-w-2xl mx-auto">
         <div className="flex justify-between items-end">
@@ -655,8 +1149,13 @@ export default function VirtualTableTab({
 
   // ── Rendering Claim Seat Screen ─────────────────────────────────────────────
   if (!isAuthenticated && !currentPlayerId && !isSpectator) {
-    const liveGamePlayerIds = liveGame.players.map(p => p.id);
-    const selectablePlayers = config.players.filter(p => liveGamePlayerIds.includes(p.id));
+    const activeTablesPlayerIds = [];
+    Object.values(liveGames || {}).forEach(g => {
+      if (g && g.active && g.players) {
+        g.players.forEach(p => activeTablesPlayerIds.push(p.id));
+      }
+    });
+    const selectablePlayers = config.players.filter(p => activeTablesPlayerIds.includes(p.id));
 
     return (
       <div className="max-w-md mx-auto space-y-6 animate-in fade-in duration-500 py-8">
@@ -757,6 +1256,34 @@ export default function VirtualTableTab({
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       
+      {/* Table Selector Tabs at the Top */}
+      {activeTables.length > 1 && (
+        <div className="flex gap-2 mb-4 bg-zinc-950/60 p-1.5 rounded-2xl border border-white/5">
+          {activeTables.map(table => {
+            const isActive = table.id === activeTableId;
+            const playerCount = table.players?.length || 0;
+            const tableName = table.id === 'main' ? 'Table 1' : `Table ${table.id.split('_')[1] || table.id}`;
+            
+            return (
+              <button
+                key={table.id}
+                onClick={() => setActiveTableId(table.id)}
+                className={`flex-1 py-2.5 px-4 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                  isActive
+                    ? 'bg-amber-500 text-amber-950 shadow-md'
+                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
+                }`}
+              >
+                <span>{tableName}</span>
+                <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${isActive ? 'bg-amber-600 text-amber-100' : 'bg-zinc-800 text-zinc-500'}`}>
+                  {playerCount} Players
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      
       {/* Player seat identification / Spectator warning badge */}
       {!isAuthenticated && currentPlayerId && (
         <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 py-3 px-4 rounded-2xl flex items-center justify-between gap-2.5 text-sm font-semibold">
@@ -764,20 +1291,59 @@ export default function VirtualTableTab({
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
             <span>Playing as: <strong className="text-white">{config.players.find(p => p.id === currentPlayerId)?.name || currentPlayerId}</strong></span>
           </div>
-          <button
-            onClick={() => {
-              if (window.confirm("Are you sure you want to vacate this seat?")) {
-                setCurrentPlayerId(null);
-                localStorage.removeItem('poker_player_id');
-                localStorage.removeItem('poker_player_pin');
-                setClaimPlayerId('');
-                setClaimPin('');
+          <div className="flex items-center gap-2">
+            {activeTables.length > 1 && (() => {
+              const myTable = activeTables.find(t => t.players?.some(p => p.id === currentPlayerId));
+              if (myTable && myTable.id !== activeTableId) {
+                const myTableName = myTable.id === 'main' ? 'Table 1' : `Table ${myTable.id.split('_')[1] || myTable.id}`;
+                return (
+                  <button
+                    onClick={() => setActiveTableId(myTable.id)}
+                    className="text-xs text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 px-2.5 py-1 rounded-lg transition-all cursor-pointer font-bold border border-amber-500/20"
+                  >
+                    Go to {myTableName}
+                  </button>
+                );
+              } else if (!myTable) {
+                return (
+                  <button
+                    onClick={() => handleActionClick('SWAP_TABLE', { targetTableId: activeTableId })}
+                    className="text-xs text-amber-950 bg-amber-500 hover:bg-amber-400 px-2.5 py-1 rounded-lg transition-all cursor-pointer font-bold"
+                  >
+                    Join This Table
+                  </button>
+                );
+              } else {
+                const otherTable = activeTables.find(t => t.id !== activeTableId);
+                if (otherTable) {
+                  const otherTableName = otherTable.id === 'main' ? 'Table 1' : `Table ${otherTable.id.split('_')[1] || otherTable.id}`;
+                  return (
+                    <button
+                      onClick={() => handleActionClick('SWAP_TABLE', { targetTableId: otherTable.id })}
+                      className="text-xs text-zinc-400 hover:text-zinc-200 bg-white/5 hover:bg-white/10 px-2.5 py-1 rounded-lg transition-all cursor-pointer font-bold"
+                    >
+                      Swap to {otherTableName}
+                    </button>
+                  );
+                }
               }
-            }}
-            className="text-xs text-zinc-400 hover:text-zinc-200 bg-white/5 hover:bg-white/10 px-2.5 py-1 rounded-lg transition-all cursor-pointer font-bold"
-          >
-            Leave Seat
-          </button>
+              return null;
+            })()}
+            <button
+              onClick={() => {
+                if (window.confirm("Are you sure you want to vacate this seat?")) {
+                  setCurrentPlayerId(null);
+                  localStorage.removeItem('poker_player_id');
+                  localStorage.removeItem('poker_player_pin');
+                  setClaimPlayerId('');
+                  setClaimPin('');
+                }
+              }}
+              className="text-xs text-zinc-400 hover:text-zinc-200 bg-white/5 hover:bg-white/10 px-2.5 py-1 rounded-lg transition-all cursor-pointer font-bold"
+            >
+              Leave Seat
+            </button>
+          </div>
         </div>
       )}
 
@@ -796,6 +1362,9 @@ export default function VirtualTableTab({
         </div>
       )}
 
+      {/* Top Banner stats + Main content — only when a live game document exists */}
+      {liveGame ? (
+        <>
       {/* Top Banner stats */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-4 flex flex-col justify-between">
@@ -831,7 +1400,14 @@ export default function VirtualTableTab({
 
             <div className="text-xs uppercase font-bold text-zinc-500 tracking-wider mb-4 pb-2 border-b border-white/5 flex justify-between items-center z-10">
               <span>Table Seats</span>
-              <span className="font-mono text-zinc-600">Active Players: {liveGame.players.filter(p => !p.outOfChips && !p.folded).length}</span>
+              <div className="flex items-center gap-3">
+                {repositionMode && (
+                  <span className="text-amber-400 font-bold text-[10px] uppercase tracking-widest animate-pulse">
+                    Click a seat to set {repositionMode === 'dealer' ? 'Dealer' : 'Turn'}
+                  </span>
+                )}
+                <span className="font-mono text-zinc-600">Active Players: {liveGame.players.filter(p => !p.outOfChips && !p.folded).length}</span>
+              </div>
             </div>
 
             {/* Grid Layout of Players */}
@@ -866,8 +1442,17 @@ export default function VirtualTableTab({
                 else if (p.isAllIn) cardClass = "bg-rose-500/5 border-rose-500/20 text-rose-400";
                 else if (isActing && liveGame.stage !== 'SHOWDOWN') cardClass = "bg-zinc-900 border-amber-500/60 ring-2 ring-amber-500/20 shadow-[0_0_20px_rgba(245,158,11,0.15)]";
 
+                const isRepoClickable = isAuthenticated && repositionMode !== null;
+                const seatCardExtra = isRepoClickable
+                  ? 'cursor-pointer ring-2 ring-amber-500/40 hover:ring-amber-400/70'
+                  : '';
+
                 return (
-                  <div key={p.id} className={`border rounded-2xl p-4 flex flex-col justify-between transition-all duration-300 relative ${cardClass}`}>
+                  <div
+                    key={p.id}
+                    className={`border rounded-2xl p-4 flex flex-col justify-between transition-all duration-300 relative ${cardClass} ${seatCardExtra}`}
+                    onClick={() => isRepoClickable && handleSeatCardClick(idx)}
+                  >
                     
                     {/* Badge header */}
                     <div className="flex items-center justify-between mb-2">
@@ -885,6 +1470,16 @@ export default function VirtualTableTab({
                             {blindLabel}
                           </span>
                         )}
+                        {/* Inline stack edit button (host only) */}
+                        {isAuthenticated && !repositionMode && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setEditingStack({ idx, value: String(p.stack) }); }}
+                            title="Edit stack directly"
+                            className="w-5 h-5 rounded bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center transition-colors cursor-pointer"
+                          >
+                            <Pencil className="w-2.5 h-2.5 text-zinc-400" />
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -892,9 +1487,25 @@ export default function VirtualTableTab({
                       <h4 className={`text-base font-bold truncate ${isActing && liveGame.stage !== 'SHOWDOWN' ? 'text-amber-400 font-extrabold' : 'text-zinc-200'}`}>
                         {p.name}
                       </h4>
-                      <p className="text-xs text-zinc-500 font-semibold tracking-wide">
-                        Stack: <span className="font-mono text-zinc-300 font-extrabold">{Number(p.stack).toLocaleString()}</span>
-                      </p>
+                      {/* Stack display or inline edit */}
+                      {editingStack && editingStack.idx === idx ? (
+                        <div className="flex items-center gap-1 mt-1" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="number"
+                            autoFocus
+                            value={editingStack.value}
+                            onChange={(e) => setEditingStack(prev => ({ ...prev, value: e.target.value }))}
+                            onKeyDown={(e) => { if (e.key === 'Enter') handleSaveStackEdit(); if (e.key === 'Escape') setEditingStack(null); }}
+                            className="bg-zinc-950 border border-amber-500/50 rounded-lg py-1 px-2 text-right text-xs text-zinc-200 font-mono font-semibold w-20 focus:outline-none"
+                          />
+                          <button onClick={handleSaveStackEdit} className="text-emerald-400 hover:text-emerald-300 cursor-pointer"><Check className="w-3.5 h-3.5" /></button>
+                          <button onClick={() => setEditingStack(null)} className="text-zinc-500 hover:text-zinc-300 cursor-pointer"><AlertTriangle className="w-3.5 h-3.5" /></button>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-zinc-500 font-semibold tracking-wide">
+                          Stack: <span className="font-mono text-zinc-300 font-extrabold">{Number(p.stack).toLocaleString()}</span>
+                        </p>
+                      )}
                     </div>
 
                     {/* Bet or status display */}
@@ -1087,19 +1698,72 @@ export default function VirtualTableTab({
             </div>
           )}
 
-          {/* Admin Override Settings Card */}
+          {/* Admin Override Controls */}
           {isAuthenticated && (
             <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-5 space-y-3">
+              <h3 className="text-xs uppercase font-extrabold tracking-widest text-zinc-500 border-b border-white/5 pb-2.5 flex items-center gap-2">
+                <Target className="w-3.5 h-3.5" />
+                Host Overrides
+              </h3>
+
+              {/* Undo + Skip Turn */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={handleUndo}
+                  disabled={!(liveGame?.stateHistory?.length > 0)}
+                  title={`Undo (${liveGame?.stateHistory?.length || 0}/${MAX_HISTORY} saved)`}
+                  className="flex items-center justify-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 border border-white/5 text-zinc-300 font-bold py-2.5 px-3 rounded-xl text-xs transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <Undo2 className="w-3.5 h-3.5" />
+                  Undo ({liveGame?.stateHistory?.length || 0})
+                </button>
+                <button
+                  onClick={handleSkipTurn}
+                  disabled={liveGame?.actingPlayerIndex === -1}
+                  className="flex items-center justify-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 border border-white/5 text-zinc-300 font-bold py-2.5 px-3 rounded-xl text-xs transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <SkipForward className="w-3.5 h-3.5" />
+                  Skip Turn
+                </button>
+              </div>
+
+              {/* Reposition Buttons */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setRepositionMode(repositionMode === 'dealer' ? null : 'dealer')}
+                  className={`flex items-center justify-center gap-1.5 font-bold py-2.5 px-3 rounded-xl text-xs transition-all cursor-pointer border ${
+                    repositionMode === 'dealer'
+                      ? 'bg-white text-zinc-950 border-white shadow-[0_0_12px_rgba(255,255,255,0.15)]'
+                      : 'bg-zinc-800 hover:bg-zinc-700 border-white/5 text-zinc-300'
+                  }`}
+                >
+                  <span className="w-4 h-4 rounded-full bg-white text-zinc-950 font-black text-[9px] flex items-center justify-center shrink-0">D</span>
+                  Set Dealer
+                </button>
+                <button
+                  onClick={() => setRepositionMode(repositionMode === 'acting' ? null : 'acting')}
+                  className={`flex items-center justify-center gap-1.5 font-bold py-2.5 px-3 rounded-xl text-xs transition-all cursor-pointer border ${
+                    repositionMode === 'acting'
+                      ? 'bg-amber-500 text-amber-950 border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.25)]'
+                      : 'bg-zinc-800 hover:bg-zinc-700 border-white/5 text-zinc-300'
+                  }`}
+                >
+                  <span className="w-4 h-4 rounded-full bg-amber-500 text-amber-950 font-black text-[9px] flex items-center justify-center shrink-0">▶</span>
+                  Set Turn
+                </button>
+              </div>
+
+              {/* Manual Chip Adjustments (drop-down) */}
               <button
                 onClick={() => setShowManualPanel(!showManualPanel)}
-                className="w-full flex items-center justify-between text-xs font-bold text-zinc-500 uppercase tracking-widest cursor-pointer hover:text-zinc-300"
+                className="w-full flex items-center justify-between text-xs font-bold text-zinc-500 uppercase tracking-widest cursor-pointer hover:text-zinc-300 pt-1 border-t border-white/5"
               >
-                <span>Manual Chip Adjustments</span>
+                <span>Stack Adjustment (±)</span>
                 {showManualPanel ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
               </button>
 
               {showManualPanel && (
-                <div className="space-y-3 pt-3 border-t border-white/5 animate-in fade-in duration-300">
+                <div className="space-y-3 animate-in fade-in duration-300">
                   <div>
                     <label className="text-[9px] uppercase font-bold text-zinc-500 mb-1.5 block">Player</label>
                     <select
@@ -1152,6 +1816,74 @@ export default function VirtualTableTab({
             </div>
           )}
 
+          {/* Table Management Controls */}
+          {isAuthenticated && (
+            <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-5 space-y-3">
+              <h4 className="text-xs font-bold text-zinc-500 uppercase tracking-widest border-b border-white/5 pb-2.5">
+                Table Management
+              </h4>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setShowManageTableModal(true)}
+                  className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold py-2.5 px-3 rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  Manage Players
+                </button>
+
+                <button
+                  onClick={() => setShowSplitModal(true)}
+                  disabled={!liveGame || liveGame.players?.length < 2}
+                  className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold py-2.5 px-3 rounded-xl text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                >
+                  <Power className="w-3.5 h-3.5 rotate-45" />
+                  Split Table
+                </button>
+              </div>
+
+              {activeTables.length > 1 && (
+                <div className="pt-2 border-t border-white/5">
+                  <label className="text-[9px] uppercase font-bold text-zinc-500 mb-1.5 block">Move Player to Table</label>
+                  <div className="flex gap-2">
+                    <select
+                      id="hostMovePlayerSelect"
+                      className="bg-zinc-950 border border-white/10 rounded-xl py-2 px-3 text-zinc-300 text-xs font-semibold flex-1 focus:outline-none"
+                    >
+                      <option value="">Select Player</option>
+                      {liveGame.players?.map(p => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                    </select>
+                    <select
+                      id="hostMoveTargetTableSelect"
+                      className="bg-zinc-950 border border-white/10 rounded-xl py-2 px-3 text-zinc-300 text-xs font-semibold flex-1 focus:outline-none"
+                    >
+                      <option value="">Target Table</option>
+                      {activeTables.filter(t => t.id !== activeTableId).map(t => (
+                        <option key={t.id} value={t.id}>{t.id === 'main' ? 'Table 1' : `Table ${t.id.split('_')[1] || t.id}`}</option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={async () => {
+                        const pSelect = document.getElementById('hostMovePlayerSelect');
+                        const tSelect = document.getElementById('hostMoveTargetTableSelect');
+                        if (pSelect?.value && tSelect?.value) {
+                          await handleTableSwap(pSelect.value, tSelect.value);
+                          pSelect.value = "";
+                          tSelect.value = "";
+                        }
+                      }}
+                      className="bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold px-3 py-2 rounded-xl text-xs transition-colors cursor-pointer"
+                    >
+                      Move
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* End Session button group */}
           {isAuthenticated && (
             <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-5 space-y-2">
@@ -1167,7 +1899,7 @@ export default function VirtualTableTab({
                 onClick={handleResetGame}
                 className="w-full bg-rose-500/10 border border-rose-500/20 hover:bg-rose-500/20 text-rose-400 font-semibold py-2.5 rounded-2xl text-xs transition-all cursor-pointer"
               >
-                Reset / Delete Live Game
+                Reset / Delete Live Table
               </button>
             </div>
           )}
@@ -1188,6 +1920,181 @@ export default function VirtualTableTab({
         </div>
 
       </div>
+
+        </>
+      ) : (
+        <div className="bg-zinc-900/30 border border-white/5 rounded-3xl p-10 flex flex-col items-center justify-center gap-3 text-center border-dashed">
+          <Trophy className="w-10 h-10 text-zinc-700" />
+          <p className="text-zinc-500 font-semibold text-sm">No active game table found.</p>
+          <p className="text-zinc-600 text-xs max-w-xs">Start a new game from the host controls, or wait for the host to set up a table.</p>
+        </div>
+      )}
+
+      {/* Manage Table Players Modal */}
+      {showManageTableModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-zinc-900 border border-white/10 p-6 rounded-3xl w-full max-w-md space-y-6 shadow-2xl relative">
+            <h3 className="text-lg font-bold text-white">Manage Players at {activeTableId === 'main' ? 'Table 1' : `Table ${activeTableId.split('_')[1] || activeTableId}`}</h3>
+            
+            <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+              {config.players.map(p => {
+                const isAtTable = liveGame?.players?.some(lp => lp.id === p.id);
+                const playerObj = liveGame?.players?.find(lp => lp.id === p.id);
+                const dec = playerDeclarations?.[p.id];
+                
+                return (
+                  <div key={p.id} className="flex items-center justify-between p-3 rounded-2xl bg-zinc-950/40 border border-white/5">
+                    <div>
+                      <span className="text-sm font-semibold text-zinc-200">{p.name}</span>
+                      {isAtTable && playerObj && (
+                        <span className="text-xs text-zinc-500 block font-mono">Stack: {playerObj.stack.toLocaleString()}</span>
+                      )}
+                      {!isAtTable && dec && dec.status === 'active' && (
+                        <span className="text-xs text-amber-400 block font-mono">Declared: {(Number(dec.buyIn || 0) + Number(dec.rebuys || 0)).toLocaleString()}</span>
+                      )}
+                    </div>
+
+                    {isAtTable ? (
+                      <button
+                        onClick={async () => {
+                          if (window.confirm(`Remove ${p.name} from this table?`)) {
+                            const removeResult = removePlayerFromGame(liveGame.players, p.id, liveGame.dealerIndex, liveGame.actingPlayerIndex);
+                            const currentProcessed = { ...(liveGame.processedDeclarations || {}) };
+                            delete currentProcessed[p.id];
+
+                            await setDoc(gameDocRef, {
+                              ...liveGame,
+                              players: removeResult.players,
+                              dealerIndex: removeResult.dealerIndex,
+                              actingPlayerIndex: removeResult.actingPlayerIndex,
+                              processedDeclarations: currentProcessed,
+                              history: [...(liveGame.history || []), `[Host Remove] ${p.name} removed from table.`],
+                              lastUpdated: new Date().toISOString()
+                            });
+                          }
+                        }}
+                        className="bg-rose-500/10 border border-rose-500/20 hover:bg-rose-500/20 text-rose-400 font-bold px-3 py-1.5 rounded-lg text-xs transition-colors cursor-pointer"
+                      >
+                        Remove
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number"
+                          id={`startStack_${p.id}`}
+                          placeholder="Stack"
+                          defaultValue={dec?.buyIn !== undefined ? Number(dec.buyIn) + Number(dec.rebuys || 0) : p.startBalance || 500}
+                          className="bg-zinc-900 border border-white/10 rounded-lg px-2 py-1 text-xs text-right font-mono text-zinc-200 w-16 focus:outline-none"
+                        />
+                        <button
+                          onClick={async () => {
+                            const stackInput = document.getElementById(`startStack_${p.id}`);
+                            const startingStack = Number(stackInput?.value || 0);
+
+                            const isHandRunning = liveGame && liveGame.stage !== 'SETUP' && liveGame.stage !== 'SHOWDOWN';
+                            const newPlayer = {
+                              id: p.id,
+                              name: p.name,
+                              stack: startingStack,
+                              currentBet: 0,
+                              totalHandInvestment: 0,
+                              folded: isHandRunning,
+                              isAllIn: false,
+                              outOfChips: false,
+                              hasActed: isHandRunning
+                            };
+
+                            const updatedPlayers = [...(liveGame?.players || []), newPlayer];
+                            const currentProcessed = { ...(liveGame?.processedDeclarations || {}) };
+                            currentProcessed[p.id] = { buyIn: startingStack, rebuys: 0 };
+
+                            await setDoc(gameDocRef, {
+                              ...liveGame,
+                              players: updatedPlayers,
+                              processedDeclarations: currentProcessed,
+                              history: [...(liveGame?.history || []), `[Host Add] ${p.name} added to table with ${startingStack.toLocaleString()} chips.`],
+                              lastUpdated: new Date().toISOString()
+                            });
+                          }}
+                          className="bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-bold px-3 py-1.5 rounded-lg text-xs transition-colors cursor-pointer"
+                        >
+                          Add
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <button
+              onClick={() => setShowManageTableModal(false)}
+              className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold py-3 rounded-2xl text-sm transition-colors cursor-pointer"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Split Table Modal */}
+      {showSplitModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-zinc-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-zinc-900 border border-white/10 p-6 rounded-3xl w-full max-w-md space-y-6 shadow-2xl">
+            <div>
+              <h3 className="text-lg font-bold text-white">Split Table</h3>
+              <p className="text-xs text-zinc-500 mt-1">Select players to move to the new table.</p>
+            </div>
+
+            <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+              {liveGame?.players?.map(p => {
+                const elId = `split_player_${p.id}`;
+                return (
+                  <div key={p.id} className="flex items-center justify-between p-3 rounded-2xl bg-zinc-950/40 border border-white/5 text-sm">
+                    <span className="font-semibold text-zinc-200">{p.name}</span>
+                    <input
+                      type="checkbox"
+                      id={elId}
+                      className="rounded border-zinc-700 bg-zinc-950 text-amber-500 focus:ring-amber-500 h-4 w-4 cursor-pointer"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={() => setShowSplitModal(false)}
+                className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold py-3 rounded-2xl text-sm transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  const toMove = [];
+                  liveGame?.players?.forEach(p => {
+                    const cb = document.getElementById(`split_player_${p.id}`);
+                    if (cb && cb.checked) {
+                      toMove.push(p.id);
+                    }
+                  });
+
+                  if (toMove.length === 0) {
+                    alert("Please select at least 1 player to move.");
+                    return;
+                  }
+
+                  const nextId = 'table_' + (activeTables.length + 1);
+                  await handleSplitTable(toMove, nextId);
+                }}
+                className="bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold py-3 rounded-2xl text-sm transition-all shadow-md cursor-pointer"
+              >
+                Create Table & Move
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
