@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { signInWithCustomToken, signInAnonymously, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { collection, onSnapshot, doc, setDoc, addDoc, updateDoc, deleteDoc, getDoc } from 'firebase/firestore';
-import { Trophy, CalendarDays, HandCoins, Settings, Crown, Lock, Unlock, Dices, BookOpen, User, TrendingUp } from 'lucide-react';
+import { Trophy, CalendarDays, HandCoins, Settings, Crown, Lock, Unlock, Dices, BookOpen, User, TrendingUp, KeyRound } from 'lucide-react';
 
 // Imports from our new modular files
 import { auth, db, safeAppId } from './firebase';
@@ -39,7 +39,7 @@ export default function App() {
   
   const [sessions, setSessions]   = useState([]);
   const [loans, setLoans]         = useState([]);
-  const [liveGame, setLiveGame]   = useState(null);
+  const [liveGames, setLiveGames] = useState({});
   const [playerDeclarations, setPlayerDeclarations] = useState({});
   const [loading, setLoading]     = useState(true);
 
@@ -96,7 +96,7 @@ export default function App() {
     const configRef   = doc(db, 'artifacts', safeAppId, 'public', 'data', 'config', 'main');
     const sessionsRef = collection(db, 'artifacts', safeAppId, 'public', 'data', 'sessions');
     const loansRef    = collection(db, 'artifacts', safeAppId, 'public', 'data', 'loans');
-    const liveGameRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGame', 'main');
+    const liveGamesRef = collection(db, 'artifacts', safeAppId, 'public', 'data', 'liveGame');
     const declarationsRef = collection(db, 'artifacts', safeAppId, 'public', 'data', 'playerDeclarations');
     const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
 
@@ -123,13 +123,13 @@ export default function App() {
       setLoans(data);
     }, err => console.error('Loan fetch error:', err));
 
-    const unsubLiveGame = onSnapshot(liveGameRef, snap => {
-      if (snap.exists()) {
-        setLiveGame(snap.data());
-      } else {
-        setLiveGame(null);
-      }
-    }, err => console.error('Live game fetch error:', err));
+    const unsubLiveGames = onSnapshot(liveGamesRef, snap => {
+      const data = {};
+      snap.docs.forEach(d => {
+        data[d.id] = d.data();
+      });
+      setLiveGames(data);
+    }, err => console.error('Live games collection fetch error:', err));
 
     const unsubDeclarations = onSnapshot(declarationsRef, snap => {
       const data = {};
@@ -150,7 +150,7 @@ export default function App() {
       setBalancesLoaded(true);
     }, err => console.error('Balances fetch error:', err));
 
-    return () => { unsubConfig(); unsubSessions(); unsubLoans(); unsubLiveGame(); unsubDeclarations(); unsubBalances(); };
+    return () => { unsubConfig(); unsubSessions(); unsubLoans(); unsubLiveGames(); unsubDeclarations(); unsubBalances(); };
   }, [user]);
 
   // Fetch private PINs when admin is authenticated
@@ -604,12 +604,12 @@ export default function App() {
   }
 
   const navItems = [
-    ...(currentPlayerId ? [{ id: 'playerDashboard', icon: User, label: 'My Dashboard' }] : []),
+    { id: 'playerDashboard', icon: User, label: 'My Dashboard' },
     { id: 'dashboard',    icon: Trophy,       label: 'Leaderboard' },
     { id: 'stats',        icon: TrendingUp,   label: 'Stats' },
     { id: 'sessions',     icon: CalendarDays, label: 'Sessions' },
     { id: 'loans',        icon: HandCoins,    label: 'Loans' },
-    { id: 'virtualTable', icon: Dices,        label: 'Virtual Table' },
+    ...(isAuthenticated ? [{ id: 'virtualTable', icon: Dices, label: 'Virtual Table Manager' }] : []),
     { id: 'rules',        icon: BookOpen,     label: 'Rules' },
     { id: 'settings',     icon: Settings,     label: 'Settings' },
   ];
@@ -630,59 +630,45 @@ export default function App() {
                   : 'text-zinc-400 hover:text-zinc-100 hover:bg-white/5'
               }`}
             >
-              <tab.icon className="h-5 w-5" />
-              {tab.label}
+              <tab.icon className={`h-5 w-5 ${activeTab === tab.id ? 'fill-amber-400/10 text-amber-400' : 'text-zinc-400'}`} />
+              <span>{tab.label}</span>
             </button>
           ))}
         </div>
-        <div className="p-4 border-t border-white/5">
+        {/* Sidebar Footer */}
+        <div className="p-4 border-t border-white/5 flex flex-col gap-2">
           <button
             onClick={() => isAuthenticated ? handleAdminLogout() : setShowPinModal(true)}
-            className={`flex items-center justify-center gap-2 w-full py-3 rounded-xl border transition-all ${
-              isAuthenticated
-                ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20'
-                : 'bg-zinc-900 border-white/10 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
-            }`}
+            className="flex items-center justify-between gap-3 w-full px-4 py-3 rounded-xl text-xs font-semibold bg-zinc-950 border border-white/5 text-zinc-400 hover:text-white hover:bg-zinc-900 transition-all cursor-pointer"
           >
-            {isAuthenticated ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
-            <span className="text-sm font-bold">{isAuthenticated ? 'Admin Unlocked' : 'Admin Locked'}</span>
+            <span className="flex items-center gap-2">
+              <KeyRound className="w-4 h-4 text-zinc-500" />
+              <span>{isAuthenticated ? 'Admin Active' : 'Admin Unlock'}</span>
+            </span>
+            {isAuthenticated ? <Unlock className="w-4 h-4 text-amber-400" /> : <Lock className="w-4 h-4 text-zinc-600" />}
           </button>
         </div>
       </aside>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden relative">
+      <div className="flex-1 flex flex-col overflow-hidden">
         
-        {/* Header */}
-        <header className="flex-shrink-0 sticky top-0 z-30 bg-[#09090b]/80 backdrop-blur-xl border-b border-white/5">
-          <div className="h-16 flex items-center justify-center relative px-4">
-            
-            {/* Logo (Left Aligned) */}
-            <div className="absolute left-4 md:left-6 bg-gradient-to-br from-amber-400 to-orange-600 p-2 rounded-xl shadow-[0_0_15px_rgba(245,158,11,0.2)]">
-              <Crown className="h-5 w-5 text-white" />
-            </div>
- 
-            {/* Centered Title */}
-            <div className="flex flex-col items-center justify-center translate-y-[2px]">
-              <h1 className="text-xl font-black text-white tracking-tight leading-none">Championship</h1>
-              <p className="text-[10px] uppercase tracking-widest text-zinc-500 font-semibold mt-1">
-                Day {currentDay} • {config.players.length} Players
-              </p>
-            </div>
- 
-            {/* Mobile Admin Toggle (Absolute right) */}
-            <div className="md:hidden absolute right-4">
-              <button
-                onClick={() => isAuthenticated ? handleAdminLogout() : setShowPinModal(true)}
-                className={`p-2 rounded-xl border transition-all ${
-                  isAuthenticated
-                    ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20'
-                    : 'bg-zinc-900 border-white/10 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
-                }`}
-              >
-                {isAuthenticated ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
-              </button>
-            </div>
+        {/* Mobile Header */}
+        <header className="md:hidden h-16 border-b border-white/5 flex items-center justify-between px-4 bg-[#09090b]/80 backdrop-blur-md">
+          <h1 className="text-lg font-black bg-gradient-to-r from-amber-400 to-orange-500 bg-clip-text text-transparent">
+            {config.leagueName}
+          </h1>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => isAuthenticated ? handleAdminLogout() : setShowPinModal(true)}
+              className={`p-2.5 rounded-xl border transition-all ${
+                isAuthenticated 
+                  ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+                  : 'bg-zinc-900 border-white/10 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
+              }`}
+            >
+              {isAuthenticated ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
+            </button>
           </div>
         </header>
         {/* Scrollable Main Content */}
@@ -698,6 +684,7 @@ export default function App() {
                 currentDay={currentDay}
                 playerStats={playerStats}
                 playerDeclarations={playerDeclarations}
+                liveGames={liveGames}
               />
             )}
 
@@ -767,7 +754,7 @@ export default function App() {
               <VirtualTableTab
                 isAuthenticated={isAuthenticated}
                 config={config}
-                liveGame={liveGame}
+                liveGames={liveGames}
                 currentDay={currentDay}
                 sessions={sessions}
                 currentPlayerId={currentPlayerId}
