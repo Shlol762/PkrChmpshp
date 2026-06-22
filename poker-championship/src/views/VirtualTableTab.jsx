@@ -1390,158 +1390,6 @@ export default function VirtualTableTab({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        
-        {/* LEFT COLUMN: Circular / Grid Table Stacks (8 columns width) */}
-        <div className="lg:col-span-8 space-y-6">
-          <div className="bg-zinc-950/40 border border-white/5 rounded-3xl p-6 relative min-h-[360px] flex flex-col justify-between">
-            <div className="absolute inset-0 flex items-center justify-center opacity-5 pointer-events-none">
-              <Trophy className="w-60 h-60 text-white" />
-            </div>
-
-            <div className="text-xs uppercase font-bold text-zinc-500 tracking-wider mb-4 pb-2 border-b border-white/5 flex justify-between items-center z-10">
-              <span>Table Seats</span>
-              <div className="flex items-center gap-3">
-                {repositionMode && (
-                  <span className="text-amber-400 font-bold text-[10px] uppercase tracking-widest animate-pulse">
-                    Click a seat to set {repositionMode === 'dealer' ? 'Dealer' : 'Turn'}
-                  </span>
-                )}
-                <span className="font-mono text-zinc-600">Active Players: {liveGame.players.filter(p => !p.outOfChips && !p.folded).length}</span>
-              </div>
-            </div>
-
-            {/* Grid Layout of Players */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 z-10">
-              {liveGame.players.map((p, idx) => {
-                const isDealer = idx === liveGame.dealerIndex;
-                const isActing = idx === liveGame.actingPlayerIndex;
-                
-                // Determine blind status
-                let blindLabel = "";
-                const activeCount = liveGame.players.filter(lp => !lp.outOfChips).length;
-                
-                // Construct a quick index-map of active players for SB/BB check
-                const activeIdxs = [];
-                for (let i = 1; i <= liveGame.players.length; i++) {
-                  const checkIdx = (liveGame.dealerIndex + i) % liveGame.players.length;
-                  if (!liveGame.players[checkIdx].outOfChips) {
-                    activeIdxs.push(checkIdx);
-                  }
-                }
-
-                if (activeCount === 2) {
-                  if (idx === liveGame.dealerIndex) blindLabel = "SB";
-                  else if (idx === activeIdxs[0]) blindLabel = "BB";
-                } else if (activeCount > 2) {
-                  if (idx === activeIdxs[0]) blindLabel = "SB";
-                  else if (idx === activeIdxs[1]) blindLabel = "BB";
-                }
-
-                let cardClass = "bg-zinc-900/50 border-white/5";
-                if (p.folded) cardClass = "bg-zinc-950/20 border-white/5 opacity-40";
-                else if (p.isAllIn) cardClass = "bg-rose-500/5 border-rose-500/20 text-rose-400";
-                else if (isActing && liveGame.stage !== 'SHOWDOWN') cardClass = "bg-zinc-900 border-amber-500/60 ring-2 ring-amber-500/20 shadow-[0_0_20px_rgba(245,158,11,0.15)]";
-
-                const isRepoClickable = isAuthenticated && repositionMode !== null;
-                const seatCardExtra = isRepoClickable
-                  ? 'cursor-pointer ring-2 ring-amber-500/40 hover:ring-amber-400/70'
-                  : '';
-
-                return (
-                  <div
-                    key={p.id}
-                    className={`border rounded-2xl p-4 flex flex-col justify-between transition-all duration-300 relative ${cardClass} ${seatCardExtra}`}
-                    onClick={() => isRepoClickable && handleSeatCardClick(idx)}
-                  >
-                    
-                    {/* Badge header */}
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded font-mono bg-zinc-800 text-zinc-400">
-                        Seat {idx + 1}
-                      </span>
-                      <div className="flex items-center gap-1">
-                        {isDealer && (
-                          <span className="w-5 h-5 rounded-full bg-white text-zinc-950 font-bold text-[9px] flex items-center justify-center border border-zinc-200 shadow-md" title="Dealer Button">
-                            D
-                          </span>
-                        )}
-                        {blindLabel && !p.folded && (
-                          <span className={`text-[9px] px-1 py-0.5 rounded font-bold ${blindLabel === 'BB' ? 'bg-blue-500/20 text-blue-300' : 'bg-purple-500/20 text-purple-300'}`}>
-                            {blindLabel}
-                          </span>
-                        )}
-                        {/* Inline stack edit button (host only) */}
-                        {isAuthenticated && !repositionMode && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); setEditingStack({ idx, value: String(p.stack) }); }}
-                            title="Edit stack directly"
-                            className="w-5 h-5 rounded bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center transition-colors cursor-pointer"
-                          >
-                            <Pencil className="w-2.5 h-2.5 text-zinc-400" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="mb-2">
-                      <h4 className={`text-base font-bold truncate ${isActing && liveGame.stage !== 'SHOWDOWN' ? 'text-amber-400 font-extrabold' : 'text-zinc-200'}`}>
-                        {p.name}
-                      </h4>
-                      {/* Stack display or inline edit */}
-                      {editingStack && editingStack.idx === idx ? (
-                        <div className="flex items-center gap-1 mt-1" onClick={(e) => e.stopPropagation()}>
-                          <input
-                            type="number"
-                            autoFocus
-                            value={editingStack.value}
-                            onChange={(e) => setEditingStack(prev => ({ ...prev, value: e.target.value }))}
-                            onKeyDown={(e) => { if (e.key === 'Enter') handleSaveStackEdit(); if (e.key === 'Escape') setEditingStack(null); }}
-                            className="bg-zinc-950 border border-amber-500/50 rounded-lg py-1 px-2 text-right text-xs text-zinc-200 font-mono font-semibold w-20 focus:outline-none"
-                          />
-                          <button onClick={handleSaveStackEdit} className="text-emerald-400 hover:text-emerald-300 cursor-pointer"><Check className="w-3.5 h-3.5" /></button>
-                          <button onClick={() => setEditingStack(null)} className="text-zinc-500 hover:text-zinc-300 cursor-pointer"><AlertTriangle className="w-3.5 h-3.5" /></button>
-                        </div>
-                      ) : (
-                        <p className="text-xs text-zinc-500 font-semibold tracking-wide">
-                          Stack: <span className="font-mono text-zinc-300 font-extrabold">{Number(p.stack).toLocaleString()}</span>
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Bet or status display */}
-                    <div className="mt-2 pt-2.5 border-t border-white/5 flex items-center justify-between text-xs min-h-[30px]">
-                      {p.folded ? (
-                        <span className="text-zinc-600 font-semibold uppercase tracking-wider text-[10px]">Folded</span>
-                      ) : p.isAllIn ? (
-                        <span className="text-rose-400 font-bold uppercase tracking-wider text-[10px] animate-pulse">All-In</span>
-                      ) : p.currentBet > 0 ? (
-                        <div className="flex items-center gap-1 text-zinc-400 font-medium">
-                          <Coins className="w-3 h-3 text-amber-500" />
-                          <span>Bet: <span className="font-mono text-zinc-200 font-bold">{p.currentBet.toLocaleString()}</span></span>
-                        </div>
-                      ) : (
-                        <span className="text-zinc-600 italic">No bet</span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Log / Recent History in card footer */}
-            <div className="mt-6 pt-4 border-t border-white/5">
-              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2 block">Recent History</span>
-              <div className="bg-zinc-950/60 border border-white/5 p-3.5 rounded-xl font-mono text-xs text-zinc-400 h-28 overflow-y-auto space-y-1 scrollbar-thin">
-                {liveGame.history?.slice(-8).map((log, i) => (
-                  <div key={i} className="leading-relaxed truncate">
-                    <span className="text-zinc-600 mr-2 font-bold">&gt;</span>
-                    {log}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
 
         {/* RIGHT COLUMN: Actions & Control Panel (4 columns width) */}
         <div className="lg:col-span-4 space-y-4">
@@ -1917,6 +1765,158 @@ export default function VirtualTableTab({
             </div>
           )}
 
+        </div>
+
+        {/* LEFT COLUMN: Circular / Grid Table Stacks (8 columns width) */}
+        <div className="lg:col-span-8 space-y-6">
+          <div className="bg-zinc-950/40 border border-white/5 rounded-3xl p-6 relative min-h-[360px] flex flex-col justify-between">
+            <div className="absolute inset-0 flex items-center justify-center opacity-5 pointer-events-none">
+              <Trophy className="w-60 h-60 text-white" />
+            </div>
+
+            <div className="text-xs uppercase font-bold text-zinc-500 tracking-wider mb-4 pb-2 border-b border-white/5 flex justify-between items-center z-10">
+              <span>Table Seats</span>
+              <div className="flex items-center gap-3">
+                {repositionMode && (
+                  <span className="text-amber-400 font-bold text-[10px] uppercase tracking-widest animate-pulse">
+                    Click a seat to set {repositionMode === 'dealer' ? 'Dealer' : 'Turn'}
+                  </span>
+                )}
+                <span className="font-mono text-zinc-600">Active Players: {liveGame.players.filter(p => !p.outOfChips && !p.folded).length}</span>
+              </div>
+            </div>
+
+            {/* Grid Layout of Players */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 z-10">
+              {liveGame.players.map((p, idx) => {
+                const isDealer = idx === liveGame.dealerIndex;
+                const isActing = idx === liveGame.actingPlayerIndex;
+                
+                // Determine blind status
+                let blindLabel = "";
+                const activeCount = liveGame.players.filter(lp => !lp.outOfChips).length;
+                
+                // Construct a quick index-map of active players for SB/BB check
+                const activeIdxs = [];
+                for (let i = 1; i <= liveGame.players.length; i++) {
+                  const checkIdx = (liveGame.dealerIndex + i) % liveGame.players.length;
+                  if (!liveGame.players[checkIdx].outOfChips) {
+                    activeIdxs.push(checkIdx);
+                  }
+                }
+
+                if (activeCount === 2) {
+                  if (idx === liveGame.dealerIndex) blindLabel = "SB";
+                  else if (idx === activeIdxs[0]) blindLabel = "BB";
+                } else if (activeCount > 2) {
+                  if (idx === activeIdxs[0]) blindLabel = "SB";
+                  else if (idx === activeIdxs[1]) blindLabel = "BB";
+                }
+
+                let cardClass = "bg-zinc-900/50 border-white/5";
+                if (p.folded) cardClass = "bg-zinc-950/20 border-white/5 opacity-40";
+                else if (p.isAllIn) cardClass = "bg-rose-500/5 border-rose-500/20 text-rose-400";
+                else if (isActing && liveGame.stage !== 'SHOWDOWN') cardClass = "bg-zinc-900 border-amber-500/60 ring-2 ring-amber-500/20 shadow-[0_0_20px_rgba(245,158,11,0.15)]";
+
+                const isRepoClickable = isAuthenticated && repositionMode !== null;
+                const seatCardExtra = isRepoClickable
+                  ? 'cursor-pointer ring-2 ring-amber-500/40 hover:ring-amber-400/70'
+                  : '';
+
+                return (
+                  <div
+                    key={p.id}
+                    className={`border rounded-2xl p-4 flex flex-col justify-between transition-all duration-300 relative ${cardClass} ${seatCardExtra}`}
+                    onClick={() => isRepoClickable && handleSeatCardClick(idx)}
+                  >
+                    
+                    {/* Badge header */}
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded font-mono bg-zinc-800 text-zinc-400">
+                        Seat {idx + 1}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        {isDealer && (
+                          <span className="w-5 h-5 rounded-full bg-white text-zinc-950 font-bold text-[9px] flex items-center justify-center border border-zinc-200 shadow-md" title="Dealer Button">
+                            D
+                          </span>
+                        )}
+                        {blindLabel && !p.folded && (
+                          <span className={`text-[9px] px-1 py-0.5 rounded font-bold ${blindLabel === 'BB' ? 'bg-blue-500/20 text-blue-300' : 'bg-purple-500/20 text-purple-300'}`}>
+                            {blindLabel}
+                          </span>
+                        )}
+                        {/* Inline stack edit button (host only) */}
+                        {isAuthenticated && !repositionMode && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setEditingStack({ idx, value: String(p.stack) }); }}
+                            title="Edit stack directly"
+                            className="w-5 h-5 rounded bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center transition-colors cursor-pointer"
+                          >
+                            <Pencil className="w-2.5 h-2.5 text-zinc-400" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mb-2">
+                      <h4 className={`text-base font-bold truncate ${isActing && liveGame.stage !== 'SHOWDOWN' ? 'text-amber-400 font-extrabold' : 'text-zinc-200'}`}>
+                        {p.name}
+                      </h4>
+                      {/* Stack display or inline edit */}
+                      {editingStack && editingStack.idx === idx ? (
+                        <div className="flex items-center gap-1 mt-1" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="number"
+                            autoFocus
+                            value={editingStack.value}
+                            onChange={(e) => setEditingStack(prev => ({ ...prev, value: e.target.value }))}
+                            onKeyDown={(e) => { if (e.key === 'Enter') handleSaveStackEdit(); if (e.key === 'Escape') setEditingStack(null); }}
+                            className="bg-zinc-950 border border-amber-500/50 rounded-lg py-1 px-2 text-right text-xs text-zinc-200 font-mono font-semibold w-20 focus:outline-none"
+                          />
+                          <button onClick={handleSaveStackEdit} className="text-emerald-400 hover:text-emerald-300 cursor-pointer"><Check className="w-3.5 h-3.5" /></button>
+                          <button onClick={() => setEditingStack(null)} className="text-zinc-500 hover:text-zinc-300 cursor-pointer"><AlertTriangle className="w-3.5 h-3.5" /></button>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-zinc-500 font-semibold tracking-wide">
+                          Stack: <span className="font-mono text-zinc-300 font-extrabold">{Number(p.stack).toLocaleString()}</span>
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Bet or status display */}
+                    <div className="mt-2 pt-2.5 border-t border-white/5 flex items-center justify-between text-xs min-h-[30px]">
+                      {p.folded ? (
+                        <span className="text-zinc-600 font-semibold uppercase tracking-wider text-[10px]">Folded</span>
+                      ) : p.isAllIn ? (
+                        <span className="text-rose-400 font-bold uppercase tracking-wider text-[10px] animate-pulse">All-In</span>
+                      ) : p.currentBet > 0 ? (
+                        <div className="flex items-center gap-1 text-zinc-400 font-medium">
+                          <Coins className="w-3 h-3 text-amber-500" />
+                          <span>Bet: <span className="font-mono text-zinc-200 font-bold">{p.currentBet.toLocaleString()}</span></span>
+                        </div>
+                      ) : (
+                        <span className="text-zinc-600 italic">No bet</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Log / Recent History in card footer */}
+            <div className="mt-6 pt-4 border-t border-white/5">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2 block">Recent History</span>
+              <div className="bg-zinc-950/60 border border-white/5 p-3.5 rounded-xl font-mono text-xs text-zinc-400 h-28 overflow-y-auto space-y-1 scrollbar-thin">
+                {liveGame.history?.slice(-8).map((log, i) => (
+                  <div key={i} className="leading-relaxed truncate">
+                    <span className="text-zinc-600 mr-2 font-bold">&gt;</span>
+                    {log}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
 
       </div>

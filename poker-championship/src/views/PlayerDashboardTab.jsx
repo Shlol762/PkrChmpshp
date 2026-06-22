@@ -1283,9 +1283,76 @@ export default function PlayerDashboardTab({
               </div>
             </div>
 
-            {/* Embedded Table Board Layout */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
               
+              {/* Turn Actions Panel — always rendered, dimmed when not player's turn */}
+              <div className="lg:col-span-4 space-y-4">
+                {liveGame.stage !== 'SHOWDOWN' ? (() => {
+                  const isMyTurn = currentPlayerId && actingPlayer && actingPlayer.id === currentPlayerId;
+                  // Find the player at the table (may not be seated)
+                  const myPlayerInGame = liveGame.players?.find(p => p.id === currentPlayerId) || null;
+                  const displayPlayer = isMyTurn ? actingPlayer : (myPlayerInGame || actingPlayer);
+
+                  return (
+                    <div className={`bg-zinc-900/40 border rounded-3xl p-5 space-y-4 transition-all duration-300 ${
+                      isMyTurn
+                        ? 'border-amber-500/30 shadow-[0_0_20px_rgba(245,158,11,0.08)]'
+                        : 'border-white/5'
+                    }`}>
+                      <div className="flex items-center justify-between border-b border-white/5 pb-2.5">
+                        <h3 className="text-xs uppercase font-extrabold tracking-widest text-zinc-500">
+                          {isMyTurn ? 'Your Turn to Act' : 'Action Controls'}
+                        </h3>
+                        {!isMyTurn && (
+                          <span className="text-[10px] text-zinc-600 font-semibold italic">
+                            {actingPlayer ? `${actingPlayer.name}'s turn` : isStreetSettled ? 'Street settled' : 'Waiting...'}
+                          </span>
+                        )}
+                        {isMyTurn && (
+                          <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
+                        )}
+                      </div>
+                      {displayPlayer ? (
+                        <div className={`transition-opacity duration-300 ${isMyTurn ? 'opacity-100' : 'opacity-30 pointer-events-none select-none'}`}>
+                          <ActionControlPanel
+                            key={displayPlayer.id}
+                            actingPlayer={displayPlayer}
+                            minRaiseTo={minRaiseTo}
+                            totalLivePot={totalLivePot}
+                            handleAction={handleActionClick}
+                            liveGame={liveGame}
+                          />
+                        </div>
+                      ) : (
+                        <div className="text-center py-4 text-zinc-600 italic text-sm">
+                          No active player
+                        </div>
+                      )}
+                    </div>
+                  );
+                })() : (
+                  <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-5 text-center py-6 text-zinc-500 italic text-sm">
+                    Showdown in progress. Waiting for host to award the pot...
+                  </div>
+                )}
+
+                {/* Account balance quick card */}
+                <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-5 space-y-3 text-xs">
+                  <div className="flex justify-between items-center text-zinc-400 font-medium">
+                    <span>Baseline Balance:</span>
+                    <span className="font-mono font-bold text-zinc-200">{baselineBalance.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-zinc-400 font-medium">
+                    <span>Lent / Borrowed (Today):</span>
+                    <span className="font-mono font-bold text-zinc-200">+{borrowedAmount} / -{lentAmount}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-zinc-400 font-medium">
+                    <span>Available Bank:</span>
+                    <span className="font-mono font-bold text-emerald-400">{availableBalance.toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>
+
               {/* Seats Grid */}
               <div className="lg:col-span-8 space-y-6">
                 <div className="bg-zinc-950/40 border border-white/5 rounded-3xl p-6 relative min-h-[300px] flex flex-col justify-between">
@@ -1377,74 +1444,6 @@ export default function PlayerDashboardTab({
                         </div>
                       ))}
                     </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Turn Actions Panel — always rendered, dimmed when not player's turn */}
-              <div className="lg:col-span-4 space-y-4">
-                {liveGame.stage !== 'SHOWDOWN' ? (() => {
-                  const isMyTurn = currentPlayerId && actingPlayer && actingPlayer.id === currentPlayerId;
-                  // Find the player at the table (may not be seated)
-                  const myPlayerInGame = liveGame.players?.find(p => p.id === currentPlayerId) || null;
-                  const displayPlayer = isMyTurn ? actingPlayer : (myPlayerInGame || actingPlayer);
-
-                  return (
-                    <div className={`bg-zinc-900/40 border rounded-3xl p-5 space-y-4 transition-all duration-300 ${
-                      isMyTurn
-                        ? 'border-amber-500/30 shadow-[0_0_20px_rgba(245,158,11,0.08)]'
-                        : 'border-white/5'
-                    }`}>
-                      <div className="flex items-center justify-between border-b border-white/5 pb-2.5">
-                        <h3 className="text-xs uppercase font-extrabold tracking-widest text-zinc-500">
-                          {isMyTurn ? 'Your Turn to Act' : 'Action Controls'}
-                        </h3>
-                        {!isMyTurn && (
-                          <span className="text-[10px] text-zinc-600 font-semibold italic">
-                            {actingPlayer ? `${actingPlayer.name}'s turn` : isStreetSettled ? 'Street settled' : 'Waiting...'}
-                          </span>
-                        )}
-                        {isMyTurn && (
-                          <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
-                        )}
-                      </div>
-                      {displayPlayer ? (
-                        <div className={`transition-opacity duration-300 ${isMyTurn ? 'opacity-100' : 'opacity-30 pointer-events-none select-none'}`}>
-                          <ActionControlPanel
-                            key={displayPlayer.id}
-                            actingPlayer={displayPlayer}
-                            minRaiseTo={minRaiseTo}
-                            totalLivePot={totalLivePot}
-                            handleAction={handleActionClick}
-                            liveGame={liveGame}
-                          />
-                        </div>
-                      ) : (
-                        <div className="text-center py-4 text-zinc-600 italic text-sm">
-                          No active player
-                        </div>
-                      )}
-                    </div>
-                  );
-                })() : (
-                  <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-5 text-center py-6 text-zinc-500 italic text-sm">
-                    Showdown in progress. Waiting for host to award the pot...
-                  </div>
-                )}
-
-                {/* Account balance quick card */}
-                <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-5 space-y-3 text-xs">
-                  <div className="flex justify-between items-center text-zinc-400 font-medium">
-                    <span>Baseline Balance:</span>
-                    <span className="font-mono font-bold text-zinc-200">{baselineBalance.toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-zinc-400 font-medium">
-                    <span>Lent / Borrowed (Today):</span>
-                    <span className="font-mono font-bold text-zinc-200">+{borrowedAmount} / -{lentAmount}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-zinc-400 font-medium">
-                    <span>Available Bank:</span>
-                    <span className="font-mono font-bold text-emerald-400">{availableBalance.toLocaleString()}</span>
                   </div>
                 </div>
               </div>
