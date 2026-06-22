@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { 
   TrendingUp, 
   Sparkles, 
@@ -23,6 +23,59 @@ const COLORS = [
   '#84cc16', // lime
   '#a855f7', // purple
 ];
+
+function HeaderTooltip({ label, desc, calc, align = 'right' }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleClose = (e) => {
+      if (containerRef.current && !containerRef.current.contains(e.target)) {
+        setIsOpen(false);
+      }
+    };
+    window.addEventListener('click', handleClose);
+    return () => window.removeEventListener('click', handleClose);
+  }, [isOpen]);
+
+  return (
+    <div 
+      ref={containerRef}
+      className="inline-flex items-center relative normal-case"
+      onMouseEnter={() => setIsOpen(true)}
+      onMouseLeave={() => setIsOpen(false)}
+    >
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setIsOpen(!isOpen);
+        }}
+        className="text-zinc-600 hover:text-zinc-400 p-0.5 rounded transition-colors cursor-pointer ml-1 inline-flex items-center justify-center shrink-0"
+      >
+        <HelpCircle className="w-3.5 h-3.5" />
+      </button>
+      
+      {isOpen && (
+        <div 
+          className={`absolute top-full mt-2 z-50 w-64 p-3 bg-zinc-955/95 border border-white/10 rounded-xl text-left shadow-2xl text-xs backdrop-blur-md animate-in fade-in slide-in-from-top-1 normal-case font-medium text-zinc-300 pointer-events-none ${
+            align === 'left' ? 'left-0' : align === 'center' ? 'left-1/2 -translate-x-1/2' : 'right-0'
+          }`}
+        >
+          <div className="font-bold text-white mb-1">{label}</div>
+          <div className="text-zinc-400 text-[11px] leading-relaxed">{desc}</div>
+          {calc && (
+            <div className="mt-2 pt-2 border-t border-white/5">
+              <span className="text-[10px] text-amber-400 font-bold uppercase tracking-wider block mb-0.5">Calculation</span>
+              <code className="text-[10px] font-mono text-zinc-300 bg-black/40 px-1 py-0.5 rounded block whitespace-normal break-words leading-tight">{calc}</code>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function StatsTab({ config, sessions, loans }) {
   // Sorting state for the data table
@@ -76,13 +129,41 @@ export default function StatsTab({ config, sessions, loans }) {
     // Process sessions chronologically
     completedSessions.forEach((s, index) => {
       const day = Number(s.dayNumber);
-      const prevSession = index > 0 ? completedSessions[index - 1] : null;
 
       config.players.forEach(p => {
         const playerStats = statsMap[p.id];
         const playRecord = s.ledger?.[p.id];
+        const hasLedger = s.ledger && Object.keys(s.ledger).length > 0;
 
-        let net = 0;
+        // Calculate paydays distributed up to this day
+        let paydaysUpToDay = 0;
+        completedSessions.forEach(session => {
+          if (Number(session.dayNumber) <= day) {
+            paydaysUpToDay += Number(session.paydaysDistributed?.[p.id] || 0);
+          }
+        });
+
+        // Calculate active loan principal for borrower and lender at the end of this day
+        let borrowedPrincipalD = 0;
+        let lentOutPrincipalD = 0;
+        loans.forEach(loan => {
+          if (!['active', 'pending_settlement', 'settled'].includes(loan.status)) return;
+          if (Number(loan.dayIssued) > day) return;
+          const settledDay = loan.settledDay !== undefined && loan.settledDay !== null && loan.settledDay !== '' ? Number(loan.settledDay) : Number(loan.dayIssued);
+          if (loan.status === 'settled' && settledDay <= day) return;
+
+          const principal = Number(loan.amount);
+          if (loan.borrower === p.id) borrowedPrincipalD += principal;
+          if (loan.lender === p.id) lentOutPrincipalD += principal;
+        });
+
+        const currentBal = s.balances?.[p.id] ?? Number(p.startBalance || 0);
+        const expectedBreakEvenD = Number(p.startBalance || 0) + paydaysUpToDay;
+        const cumulativeProfitD = (currentBal - borrowedPrincipalD + lentOutPrincipalD) - expectedBreakEvenD;
+
+        const prevProfit = playerStats.history[playerStats.history.length - 1].profit;
+        const net = cumulativeProfitD - prevProfit;
+
         let played = false;
 
         if (playRecord) {
@@ -90,12 +171,12 @@ export default function StatsTab({ config, sessions, loans }) {
           const rebuys = Number(playRecord.rebuys || 0);
           const cashOut = Number(playRecord.cashOut || 0);
           const volume = buyIn + rebuys;
-          net = cashOut - volume;
+          const ledgerNet = cashOut - volume;
           played = true;
 
           playerStats.totalVolume += volume;
           playerStats.ledgerSessionsCount += 1;
-          playerStats.netProfitOfLedgerSessions += net;
+          playerStats.netProfitOfLedgerSessions += ledgerNet;
           if (cashOut === 0) playerStats.bustOuts += 1;
 
           // Loans calculation on played days
@@ -106,22 +187,15 @@ export default function StatsTab({ config, sessions, loans }) {
           );
           const borrowedToday = dayLoans.reduce((sum, l) => sum + Number(l.amount || 0), 0);
           playerStats.loansBorrowedOnPlayDays += borrowedToday;
-        } else {
-          // Fallback to balance differential for older/manually-entered sessions
-          const currentBal = s.balances?.[p.id] ?? Number(p.startBalance || 0);
-          const prevBal = prevSession?.balances?.[p.id] ?? Number(p.startBalance || 0);
-          const paydayIncrease = s.paydaysDistributed?.[p.id] || 0;
-          const balanceNet = currentBal - prevBal - paydayIncrease;
-
-          if (balanceNet !== 0) {
-            net = balanceNet;
+        } else if (!hasLedger) {
+          // Fallback to balance differential for older/manually-entered sessions only
+          if (net !== 0) {
             played = true;
           }
         }
 
         if (played) {
           playerStats.totalSessions += 1;
-          playerStats.netProfit += net;
           playerStats.bestSwing = Math.max(playerStats.bestSwing, net);
           playerStats.worstSwing = Math.min(playerStats.worstSwing, net);
 
@@ -143,10 +217,13 @@ export default function StatsTab({ config, sessions, loans }) {
           }
         }
 
+        // Always update netProfit to the latest cumulative profit
+        playerStats.netProfit = cumulativeProfitD;
+
         // Push history point (flat if didn't play)
         playerStats.history.push({
           dayNumber: day,
-          profit: playerStats.netProfit
+          profit: cumulativeProfitD
         });
       });
     });
@@ -580,16 +657,37 @@ export default function StatsTab({ config, sessions, loans }) {
                     >
                       <div className="flex items-center gap-1">
                         Player
-                        {sortField === 'name' && (sortDirection === 'asc' ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />)}
+                        <HeaderTooltip 
+                          label="Player Info" 
+                          desc="The player's name and unique ID." 
+                          align="left"
+                        />
+                        {sortField === 'name' && (sortDirection === 'asc' ? <ChevronUp className="w-3.5 h-3.5 ml-auto" /> : <ChevronDown className="w-3.5 h-3.5 ml-auto" />)}
                       </div>
                     </th>
-                    <th className="p-3 text-center min-w-[110px]">Trend</th>
+                    <th className="p-3 text-center min-w-[110px]">
+                      <div className="flex items-center justify-center gap-1">
+                        Trend
+                        <HeaderTooltip 
+                          label="Bankroll Trend" 
+                          desc="Visualizes the player's cumulative bankroll profit growth over time." 
+                          calc="Plots cumulative profit trend across completed sessions"
+                          align="center"
+                        />
+                      </div>
+                    </th>
                     <th 
                       onClick={() => handleSort('netProfit')} 
                       className="p-3 text-right cursor-pointer hover:text-zinc-300 select-none min-w-[90px]"
                     >
                       <div className="flex items-center justify-end gap-1">
                         Net Profit
+                        <HeaderTooltip 
+                          label="Net Profit" 
+                          desc="Total cumulative profit or loss, including poker play and settled loan interest." 
+                          calc="(Balance - BorrowerPrincipal + LenderPrincipal) - ExpectedBreakEven"
+                          align="center"
+                        />
                         {sortField === 'netProfit' && (sortDirection === 'asc' ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />)}
                       </div>
                     </th>
@@ -599,6 +697,12 @@ export default function StatsTab({ config, sessions, loans }) {
                     >
                       <div className="flex items-center justify-end gap-1">
                         ROI
+                        <HeaderTooltip 
+                          label="Return on Investment (ROI)" 
+                          desc="Poker profitability relative to buy-in volume. Only calculated for sessions with ledger records." 
+                          calc="(Ledger Net Profit / Total Buy-in Volume) * 100"
+                          align="center"
+                        />
                         {sortField === 'roi' && (sortDirection === 'asc' ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />)}
                       </div>
                     </th>
@@ -608,6 +712,12 @@ export default function StatsTab({ config, sessions, loans }) {
                     >
                       <div className="flex items-center justify-end gap-1">
                         Win Rate
+                        <HeaderTooltip 
+                          label="Win Rate" 
+                          desc="Percentage of played sessions where the player finished with a positive net return." 
+                          calc="(Sessions with profit > 0 / Total Sessions) * 100"
+                          align="center"
+                        />
                         {sortField === 'winRate' && (sortDirection === 'asc' ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />)}
                       </div>
                     </th>
@@ -617,6 +727,12 @@ export default function StatsTab({ config, sessions, loans }) {
                     >
                       <div className="flex items-center justify-end gap-1">
                         Avg/Sess
+                        <HeaderTooltip 
+                          label="Average Profit per Session" 
+                          desc="Average overall profit/loss for each session played." 
+                          calc="Net Profit / Total Sessions"
+                          align="center"
+                        />
                         {sortField === 'avgProfit' && (sortDirection === 'asc' ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />)}
                       </div>
                     </th>
@@ -626,6 +742,12 @@ export default function StatsTab({ config, sessions, loans }) {
                     >
                       <div className="flex items-center justify-end gap-1">
                         Volume
+                        <HeaderTooltip 
+                          label="Total Buy-in Volume" 
+                          desc="Total chips bought into the game (Initial Buy-ins + Rebuys). Only calculated for sessions with ledger records." 
+                          calc="Sum of (Buy-ins + Rebuys) across sessions"
+                          align="center"
+                        />
                         {sortField === 'totalVolume' && (sortDirection === 'asc' ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />)}
                       </div>
                     </th>
@@ -635,26 +757,64 @@ export default function StatsTab({ config, sessions, loans }) {
                     >
                       <div className="flex items-center justify-end gap-1">
                         Bust Rate
+                        <HeaderTooltip 
+                          label="Bust-out Rate" 
+                          desc="Percentage of sessions where the player cashed out with 0 chips. Only calculated for sessions with ledger records." 
+                          calc="(Sessions cashed out at 0 / Ledger Sessions) * 100"
+                          align="center"
+                        />
                         {sortField === 'bustOutRate' && (sortDirection === 'asc' ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />)}
                       </div>
                     </th>
-                    <th className="p-3 text-center min-w-[95px]">Streak (C/L)</th>
+                    <th className="p-3 text-center min-w-[95px]">
+                      <div className="flex items-center justify-center gap-1">
+                        Streak (C/L)
+                        <HeaderTooltip 
+                          label="Streaks" 
+                          desc="Current active win/loss streak and longest historical streaks." 
+                          calc="W = consecutive wins, L = consecutive losses. Push (0 profit) breaks streaks."
+                          align="center"
+                        />
+                      </div>
+                    </th>
                     <th 
                       onClick={() => handleSort('loanDependency')} 
                       className="p-3 text-right cursor-pointer hover:text-zinc-300 select-none min-w-[85px]"
                     >
                       <div className="flex items-center justify-end gap-1">
                         Loan Dep.
+                        <HeaderTooltip 
+                          label="Loan Dependency" 
+                          desc="The portion of a player's buy-ins funded by borrowing from other players." 
+                          calc="(Total Loans Borrowed on Play Days / Total Volume) * 100"
+                          align="center"
+                        />
                         {sortField === 'loanDependency' && (sortDirection === 'asc' ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />)}
                       </div>
                     </th>
-                    <th className="p-3 text-right min-w-[130px]">Swings (Best/Worst)</th>
+                    <th className="p-3 text-right min-w-[130px]">
+                      <div className="flex items-center justify-end gap-1">
+                        Swings (Best/Worst)
+                        <HeaderTooltip 
+                          label="Swings" 
+                          desc="The player's best single session win and worst single session loss." 
+                          calc="Max and min net profits in a single day"
+                          align="center"
+                        />
+                      </div>
+                    </th>
                     <th 
                       onClick={() => handleSort('totalSessions')} 
                       className="p-3 text-right cursor-pointer hover:text-zinc-300 select-none min-w-[65px]"
                     >
                       <div className="flex items-center justify-end gap-1">
                         Played
+                        <HeaderTooltip 
+                          label="Sessions Played" 
+                          desc="Total number of daily sessions the player participated in." 
+                          calc="Count of completed days participated"
+                          align="right"
+                        />
                         {sortField === 'totalSessions' && (sortDirection === 'asc' ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />)}
                       </div>
                     </th>

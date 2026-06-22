@@ -1,0 +1,7 @@
+id,borrower,lender,amount,interest,dayIssued,deadlineDay,recordedAt,recordedBy,settledDay,status,settleRequestedBy
+05opnY7wQLXENAGPRpFQ,AR,SK,2000,10,4,9,2026-06-08T13:28:20.523Z,ioqFKCyAhGOtyytLWtJLIWVMYJZ2,7,settled,""
+cKpdzvi7f1CjK8TnMwrm,SK,DH,2500,10,12,17,2026-06-14T15:34:03.550Z,ioqFKCyAhGOtyytLWtJLIWVMYJZ2,"",settled,""
+ePfWD1GuFXGuLzmPxhS5,AK,AS,3000,5,2,30,2026-06-05T13:15:53.133Z,qIumLMeCzsOdo2PSUPMUPBvHDHU2,1,settled,""
+eU29dO7sq4aXy1WA1XcV,AS,VG,1500,6,9,14,2026-06-12T12:19:21.570Z,ioqFKCyAhGOtyytLWtJLIWVMYJZ2,9,settled,""
+ho3HRz9skhawWnIdhfqB,AR,AK,2000,7.5,9,14,2026-06-12T13:33:42.067Z,ioqFKCyAhGOtyytLWtJLIWVMYJZ2,16,settled,AR
+yc2lXcYidcYjwnYPQMhx,AS,VG,2000,10,10,15,2026-06-13T14:13:52.125Z,ioqFKCyAhGOtyytLWtJLIWVMYJZ2,"",active,""
