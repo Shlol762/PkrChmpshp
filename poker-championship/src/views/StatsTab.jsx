@@ -8,7 +8,8 @@ import {
   ChevronUp, 
   Info,
   Calendar,
-  HelpCircle
+  HelpCircle,
+  Coins
 } from 'lucide-react';
 
 const COLORS = [
@@ -77,6 +78,48 @@ function HeaderTooltip({ label, desc, calc, align = 'right' }) {
   );
 }
 
+// Bezier path generator for smooth curve interpolation (tension 0.2)
+const getBezierPath = (points, tension = 0.2) => {
+  if (points.length < 2) return '';
+  let path = `M ${points[0].x},${points[0].y}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i - 1] || points[i];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[i + 2] || p2;
+
+    const cp1x = p1.x + (p2.x - p0.x) * tension;
+    const cp1y = p1.y + (p2.y - p0.y) * tension;
+    const cp2x = p2.x - (p3.x - p1.x) * tension;
+    const cp2y = p2.y - (p3.y - p1.y) * tension;
+
+    path += ` C ${cp1x},${cp1y} ${cp2x},${cp2y} ${p2.x},${p2.y}`;
+  }
+  return path;
+};
+
+// Sparkline builder for table rows
+const getSparklinePath = (history) => {
+  if (history.length < 2) return '';
+  const spW = 100;
+  const spH = 26;
+  const spDays = history.map(h => h.dayNumber);
+  const spProfits = history.map(h => h.profit);
+  const spMinD = 0;
+  const spMaxD = Math.max(...spDays, 1);
+  const spMinP = Math.min(...spProfits, 0);
+  const spMaxP = Math.max(...spProfits, 100);
+  const spPDiff = spMaxP - spMinP || 1;
+
+  const points = history.map(h => {
+    const x = ((h.dayNumber - spMinD) / (spMaxD - spMinD)) * spW;
+    const y = spH - ((h.profit - spMinP) / spPDiff) * spH;
+    return { x, y };
+  });
+
+  return getBezierPath(points, 0.2);
+};
+
 export default function StatsTab({ config, sessions, loans }) {
   // Sorting state for the data table
   const [sortField, setSortField] = useState('netProfit');
@@ -86,6 +129,10 @@ export default function StatsTab({ config, sessions, loans }) {
   const [visiblePlayers, setVisiblePlayers] = useState({});
   const [hoveredDay, setHoveredDay] = useState(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+
+  // Economy chart state
+  const [hoveredEcoDay, setHoveredEcoDay] = useState(null);
+  const [ecoMousePos, setEcoMousePos] = useState({ x: 0, y: 0 });
 
   // 1. Process Completed Sessions
   const completedSessions = useMemo(() => {
@@ -98,6 +145,156 @@ export default function StatsTab({ config, sessions, loans }) {
   const allDays = useMemo(() => {
     return [0, ...completedSessions.map(s => Number(s.dayNumber))];
   }, [completedSessions]);
+
+  // Economy & Inflation stats
+  const economyStats = useMemo(() => {
+    // 1. Calculate Day 0 Money Supply
+    const startSupply = config.players.reduce((sum, p) => sum + Number(p.startBalance || 0), 0);
+    if (startSupply === 0) return null;
+
+    const history = [];
+
+    // Day 0
+    history.push({
+      dayNumber: 0,
+      moneySupply: startSupply,
+      inflationRate: 1.0,
+      paydaysDistributed: 0,
+      cumulativePaydays: 0,
+    });
+
+    let cumulativePaydays = 0;
+
+    completedSessions.forEach((s) => {
+      const day = Number(s.dayNumber);
+      
+      // Sum of balances on this day
+      let daySupply = 0;
+      config.players.forEach(p => {
+        const bal = s.balances?.[p.id] ?? Number(p.startBalance || 0);
+        daySupply += bal;
+      });
+
+      // Sum of paydays distributed on this day
+      let dayPaydays = 0;
+      if (s.paydaysDistributed) {
+        Object.values(s.paydaysDistributed).forEach(val => {
+          dayPaydays += Number(val || 0);
+        });
+      }
+      cumulativePaydays += dayPaydays;
+
+      history.push({
+        dayNumber: day,
+        moneySupply: daySupply,
+        inflationRate: daySupply / startSupply,
+        paydaysDistributed: dayPaydays,
+        cumulativePaydays: cumulativePaydays,
+      });
+    });
+
+    const latest = history[history.length - 1];
+
+    return {
+      startSupply,
+      currentSupply: latest ? latest.moneySupply : startSupply,
+      currentInflationRate: latest ? latest.inflationRate : 1.0,
+      totalPaydays: latest ? latest.cumulativePaydays : 0,
+      history,
+    };
+  }, [config.players, completedSessions]);
+
+  // Economy chart setup
+  const ecoWidth = 800;
+  const ecoHeight = 200;
+  const ecoMargin = { top: 20, right: 30, bottom: 30, left: 60 };
+
+  const ecoXMin = 0;
+  const ecoXMax = Math.max(...allDays, 1);
+
+  const ecoValues = useMemo(() => {
+    return economyStats ? economyStats.history.map(h => h.moneySupply) : [0];
+  }, [economyStats]);
+
+  const ecoMinVal = useMemo(() => {
+    const minVal = Math.min(...ecoValues, economyStats?.startSupply || 0);
+    return minVal * 0.95; // 5% padding below
+  }, [ecoValues, economyStats]);
+
+  const ecoMaxVal = useMemo(() => {
+    const maxVal = Math.max(...ecoValues, economyStats?.startSupply || 100);
+    return maxVal * 1.05; // 5% padding above
+  }, [ecoValues, economyStats]);
+
+  const ecoValDiff = useMemo(() => {
+    return (ecoMaxVal - ecoMinVal) || 1;
+  }, [ecoMaxVal, ecoMinVal]);
+
+  const getEcoX = (day) => {
+    const range = ecoXMax - ecoXMin;
+    const width = ecoWidth - ecoMargin.left - ecoMargin.right;
+    return ecoMargin.left + ((day - ecoXMin) / range) * width;
+  };
+
+  const getEcoY = (val) => {
+    const height = ecoHeight - ecoMargin.top - ecoMargin.bottom;
+    return ecoHeight - ecoMargin.bottom - ((val - ecoMinVal) / ecoValDiff) * height;
+  };
+
+  const ecoPoints = useMemo(() => {
+    return economyStats ? economyStats.history.map(h => ({ x: getEcoX(h.dayNumber), y: getEcoY(h.moneySupply) })) : [];
+  }, [economyStats, ecoMinVal, ecoMaxVal, ecoValDiff]);
+
+  const ecoLinePath = useMemo(() => {
+    return ecoPoints.length > 0 ? getBezierPath(ecoPoints, 0.2) : '';
+  }, [ecoPoints]);
+
+  const areaPath = useMemo(() => {
+    if (ecoPoints.length === 0) return '';
+    return `
+      M ${ecoPoints[0].x} ${ecoHeight - ecoMargin.bottom}
+      L ${ecoPoints[0].x} ${ecoPoints[0].y}
+      ${ecoLinePath.substring(1)}
+      L ${ecoPoints[ecoPoints.length - 1].x} ${ecoHeight - ecoMargin.bottom}
+      Z
+    `;
+  }, [ecoPoints, ecoLinePath]);
+
+  const ecoTicks = useMemo(() => {
+    return Array.from({ length: 5 }).map((_, i) => {
+      return ecoMinVal + (i / 4) * (ecoMaxVal - ecoMinVal);
+    });
+  }, [ecoMinVal, ecoMaxVal]);
+
+  const handleEcoMouseMove = (e) => {
+    if (!economyStats || economyStats.history.length === 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    const width = ecoWidth - ecoMargin.left - ecoMargin.right;
+    const range = ecoXMax - ecoXMin;
+    
+    const xRatio = (x - ecoMargin.left) / width;
+    const rawDay = ecoXMin + xRatio * range;
+
+    let closestDay = allDays[0];
+    let minDiff = Math.abs(rawDay - closestDay);
+    allDays.forEach(day => {
+      const diff = Math.abs(rawDay - day);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestDay = day;
+      }
+    });
+
+    setHoveredEcoDay(closestDay);
+    setEcoMousePos({ x: x + 15, y: y - 10 });
+  };
+
+  const handleEcoMouseLeave = () => {
+    setHoveredEcoDay(null);
+  };
 
   // 2. Aggregate Stats per Player
   const playerStats = useMemo(() => {
@@ -338,47 +535,7 @@ export default function StatsTab({ config, sessions, loans }) {
     return chartHeight - margin.bottom - ((val - yMin) / (yMax - yMin)) * (chartHeight - margin.top - margin.bottom);
   };
 
-  // Bezier path generator for smooth curve interpolation (tension 0.2)
-  const getBezierPath = (points, tension = 0.2) => {
-    if (points.length < 2) return '';
-    let path = `M ${points[0].x},${points[0].y}`;
-    for (let i = 0; i < points.length - 1; i++) {
-      const p0 = points[i - 1] || points[i];
-      const p1 = points[i];
-      const p2 = points[i + 1];
-      const p3 = points[i + 2] || p2;
 
-      const cp1x = p1.x + (p2.x - p0.x) * tension;
-      const cp1y = p1.y + (p2.y - p0.y) * tension;
-      const cp2x = p2.x - (p3.x - p1.x) * tension;
-      const cp2y = p2.y - (p3.y - p1.y) * tension;
-
-      path += ` C ${cp1x},${cp1y} ${cp2x},${cp2y} ${p2.x},${p2.y}`;
-    }
-    return path;
-  };
-
-  // Sparkline builder for table rows
-  const getSparklinePath = (history) => {
-    if (history.length < 2) return '';
-    const spW = 100;
-    const spH = 26;
-    const spDays = history.map(h => h.dayNumber);
-    const spProfits = history.map(h => h.profit);
-    const spMinD = 0;
-    const spMaxD = Math.max(...spDays, 1);
-    const spMinP = Math.min(...spProfits, 0);
-    const spMaxP = Math.max(...spProfits, 100);
-    const spPDiff = spMaxP - spMinP || 1;
-
-    const points = history.map(h => {
-      const x = ((h.dayNumber - spMinD) / (spMaxD - spMinD)) * spW;
-      const y = spH - ((h.profit - spMinP) / spPDiff) * spH;
-      return { x, y };
-    });
-
-    return getBezierPath(points, 0.2);
-  };
 
   // Handle chart hover
   const handleMouseMove = (e) => {
@@ -630,6 +787,210 @@ export default function StatsTab({ config, sessions, loans }) {
           })}
         </div>
       </div>
+
+      {/* ── Economy & Inflation Section ───────────────────────────────────────── */}
+      {economyStats && (
+        <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-5 sm:p-6 shadow-xl space-y-6 relative">
+          <div>
+            <h3 className="text-sm uppercase font-bold text-zinc-400 tracking-wider flex items-center gap-2">
+              <Coins className="w-4 h-4 text-amber-500" /> League Economy & Inflation
+            </h3>
+            <p className="text-xs text-zinc-500 mt-1">Tracks overall money supply growth, currency injection, and system-wide inflation relative to Day 0 baseline.</p>
+          </div>
+
+          {/* 4 Stat Cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-zinc-950/40 border border-white/5 rounded-2xl p-4 flex flex-col justify-between">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 block">Current Money Supply</span>
+              <span className="text-lg font-bold text-white font-mono">{economyStats.currentSupply.toLocaleString()} <span className="text-[10px] text-zinc-500">chips</span></span>
+            </div>
+            <div className="bg-zinc-950/40 border border-white/5 rounded-2xl p-4 flex flex-col justify-between">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 block">Day 0 Money Supply</span>
+              <span className="text-lg font-bold text-zinc-400 font-mono">{economyStats.startSupply.toLocaleString()} <span className="text-[10px] text-zinc-500">chips</span></span>
+            </div>
+            <div className="bg-zinc-950/40 border border-white/5 rounded-2xl p-4 flex flex-col justify-between">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 block">Inflation Rate</span>
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <span className="text-lg font-bold text-amber-400 font-mono">{economyStats.currentInflationRate.toFixed(2)}x</span>
+                {economyStats.currentInflationRate > 1 && (
+                  <span className="text-[9px] font-bold text-emerald-400 flex items-center bg-emerald-500/10 px-1.5 py-0.5 rounded leading-none">
+                    <ArrowUpRight className="w-2.5 h-2.5 shrink-0" />
+                    +{((economyStats.currentInflationRate - 1) * 100).toFixed(1)}%
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="bg-zinc-950/40 border border-white/5 rounded-2xl p-4 flex flex-col justify-between">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 block">Total Injected Paydays</span>
+              <span className="text-lg font-bold text-emerald-400 font-mono">+{economyStats.totalPaydays.toLocaleString()} <span className="text-[10px] text-zinc-500">chips</span></span>
+            </div>
+          </div>
+
+          {/* Line Chart */}
+          <div className="relative aspect-[8/3.5] w-full min-h-[220px] bg-zinc-950/20 border border-white/5 rounded-2xl p-4">
+            
+            {/* Tooltip Overlay */}
+            {hoveredEcoDay !== null && (() => {
+              const point = economyStats.history.find(h => h.dayNumber === hoveredEcoDay);
+              if (!point) return null;
+              return (
+                <div 
+                  className="absolute z-50 bg-[#09090b]/95 border border-white/10 rounded-xl p-3 shadow-2xl text-xs pointer-events-none flex flex-col gap-1.5 min-w-[170px] backdrop-blur-md"
+                  style={{ left: ecoMousePos.x, top: ecoMousePos.y }}
+                >
+                  <div className="font-bold border-b border-white/10 pb-1 text-zinc-400 flex justify-between">
+                    <span>Day {hoveredEcoDay}</span>
+                    <span className="font-mono text-amber-400">{(point.inflationRate).toFixed(2)}x</span>
+                  </div>
+                  <div className="space-y-1 text-zinc-300">
+                    <div className="flex justify-between gap-4">
+                      <span>Money Supply:</span>
+                      <span className="font-mono font-bold text-white">{point.moneySupply.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span>Paydays (Day):</span>
+                      <span className="font-mono text-emerald-400">+{point.paydaysDistributed.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span>Total Paydays:</span>
+                      <span className="font-mono text-emerald-500">+{point.cumulativePaydays.toLocaleString()}</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* SVG Graphic Canvas */}
+            <div className="w-full h-full">
+              <svg
+                viewBox={`0 0 ${ecoWidth} ${ecoHeight}`}
+                className="w-full h-full overflow-visible"
+                onMouseMove={handleEcoMouseMove}
+                onMouseLeave={handleEcoMouseLeave}
+              >
+                <defs>
+                  <linearGradient id="ecoGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.18" />
+                    <stop offset="100%" stopColor="#f59e0b" stopOpacity="0.00" />
+                  </linearGradient>
+                </defs>
+
+                {/* Y-Axis Grid Lines */}
+                {ecoTicks.map((val, i) => {
+                  const y = getEcoY(val);
+                  return (
+                    <g key={`eco-grid-y-${i}`}>
+                      <line 
+                        x1={ecoMargin.left} 
+                        y1={y} 
+                        x2={ecoWidth - ecoMargin.right} 
+                        y2={y} 
+                        stroke="rgba(255,255,255,0.03)" 
+                        strokeWidth="1" 
+                      />
+                      <text 
+                        x={ecoMargin.left - 10} 
+                        y={y + 4} 
+                        textAnchor="end" 
+                        className="font-mono text-[9px] fill-zinc-600 font-semibold"
+                      >
+                        {(val / 1000).toFixed(1).replace(/\.0$/, '')}k
+                      </text>
+                    </g>
+                  );
+                })}
+
+                {/* X-Axis labels */}
+                {allDays.map(day => {
+                  const x = getEcoX(day);
+                  return (
+                    <g key={`eco-lbl-x-${day}`}>
+                      <line 
+                        x1={x} 
+                        y1={ecoMargin.top} 
+                        x2={x} 
+                        y2={ecoHeight - ecoMargin.bottom} 
+                        stroke="rgba(255,255,255,0.02)" 
+                        strokeWidth="1" 
+                      />
+                      <text 
+                        x={x} 
+                        y={ecoHeight - ecoMargin.bottom + 18} 
+                        textAnchor="middle" 
+                        className="font-mono text-[9px] fill-zinc-600 font-bold"
+                      >
+                        D{day}
+                      </text>
+                    </g>
+                  );
+                })}
+
+                {/* Area Fill */}
+                {areaPath && (
+                  <path 
+                    d={areaPath} 
+                    fill="url(#ecoGradient)" 
+                  />
+                )}
+
+                {/* Line Path */}
+                {ecoLinePath && (
+                  <path 
+                    d={ecoLinePath} 
+                    fill="none" 
+                    stroke="#f59e0b" 
+                    strokeWidth="3" 
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                )}
+
+                {/* Dots on points */}
+                {economyStats.history.map(h => (
+                  <circle
+                    key={`eco-point-dot-${h.dayNumber}`}
+                    cx={getEcoX(h.dayNumber)}
+                    cy={getEcoY(h.moneySupply)}
+                    r="3"
+                    fill="#09090b"
+                    stroke="#f59e0b"
+                    strokeWidth="1.5"
+                  />
+                ))}
+
+                {/* Hover line and cursor marker */}
+                {hoveredEcoDay !== null && (() => {
+                  const point = economyStats.history.find(h => h.dayNumber === hoveredEcoDay);
+                  if (!point) return null;
+                  return (
+                    <g>
+                      <line
+                        x1={getEcoX(hoveredEcoDay)}
+                        y1={ecoMargin.top}
+                        x2={getEcoX(hoveredEcoDay)}
+                        y2={ecoHeight - ecoMargin.bottom}
+                        stroke="rgba(245, 158, 11, 0.3)"
+                        strokeDasharray="4 4"
+                        strokeWidth="1.5"
+                      />
+                      <circle
+                        cx={getEcoX(hoveredEcoDay)}
+                        cy={getEcoY(point.moneySupply)}
+                        r="5.5"
+                        fill="#f59e0b"
+                        stroke="#09090b"
+                        strokeWidth="1.5"
+                      />
+                    </g>
+                  );
+                })()}
+
+              </svg>
+            </div>
+
+          </div>
+        </div>
+      )}
 
       {/* ── Sortable Roster Stats Table ───────────────────────────────────────── */}
       <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-5 sm:p-6 shadow-xl flex flex-col space-y-6 overflow-hidden">
