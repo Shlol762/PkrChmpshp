@@ -120,10 +120,8 @@ export default function PlayerDashboardTab({
 
   // Available Banked Balance (balance not currently in play or lent out)
   const availableBalance = useMemo(() => {
-    const activeBuyIn = activeDeclaration?.buyIn || 0;
-    const activeRebuys = activeDeclaration?.rebuys || 0;
-    return baselineBalance + borrowedAmount - lentAmount - activeBuyIn - activeRebuys;
-  }, [baselineBalance, borrowedAmount, lentAmount, activeDeclaration]);
+    return stats ? Number(stats.bank || 0) : baselineBalance;
+  }, [stats, baselineBalance]);
 
   // Live total chips currently withdrawn from the physical case (in play)
   const totalChipsInPlay = useMemo(() => {

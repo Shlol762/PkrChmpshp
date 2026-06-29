@@ -533,7 +533,9 @@ export const approveLoanRequest = async (db, safeAppId, loanId, currentDay, user
 
     // Update loan document status
     transaction.update(loanRef, {
-      status: 'active'
+      status: 'active',
+      dayIssued: loan.dayIssued !== undefined ? Number(loan.dayIssued) : Number(currentDay),
+      deadlineDay: loan.deadlineDay !== undefined ? Number(loan.deadlineDay) : (Number(currentDay) + Number(loan.deadlineDays || 5))
     });
 
     // Write transaction log
