@@ -100,9 +100,9 @@ export default function PlayerDashboardTab({
 
   // Calculate loans issued today (only count active ones for stack calculations)
   const todayLoans = useMemo(() => {
-    if (!activeSession) return [];
-    return loans.filter(l => Number(l.dayIssued) === Number(activeSession.dayNumber));
-  }, [loans, activeSession]);
+    const latestDay = latestCompletedSession?.dayNumber || 0;
+    return loans.filter(l => Number(l.dayIssued) > Number(latestDay));
+  }, [loans, latestCompletedSession]);
 
   const { borrowedAmount, lentAmount } = useMemo(() => {
     let borrowed = 0;
@@ -413,8 +413,8 @@ export default function PlayerDashboardTab({
         lender: loanLender,
         amount: amount,
         interest: Number(loanInterest),
-        dayIssued: Number(activeSession?.dayNumber || currentDay),
-        deadlineDay: Number(activeSession?.dayNumber || currentDay) + Number(loanDeadline),
+        dayIssued: Number(activeSession?.dayNumber || (currentDay + 1)),
+        deadlineDay: Number(activeSession?.dayNumber || (currentDay + 1)) + Number(loanDeadline),
         status: 'pending',
         actionBy: currentPlayerId,
         recordedAt: new Date().toISOString(),
@@ -438,7 +438,7 @@ export default function PlayerDashboardTab({
         db,
         safeAppId,
         loan.id,
-        activeSession?.dayNumber || currentDay,
+        activeSession?.dayNumber || (currentDay + 1),
         auth.currentUser?.uid || currentPlayerId,
         activePlayers
       );
@@ -481,7 +481,7 @@ export default function PlayerDashboardTab({
         db,
         safeAppId,
         loan,
-        activeSession?.dayNumber || currentDay,
+        activeSession?.dayNumber || (currentDay + 1),
         auth.currentUser?.uid || currentPlayerId,
         activePlayers
       );
@@ -1298,13 +1298,12 @@ export default function PlayerDashboardTab({
 
                 {/* Account balance quick card */}
                 <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-5 space-y-3 text-xs">
-                  <div className="flex justify-between items-center text-zinc-400 font-medium">
-                    <span>Baseline Balance:</span>
-                    <span className="font-mono font-bold text-zinc-200">{baselineBalance.toLocaleString()}</span>
+                  <div className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider border-b border-white/5 pb-1.5 mb-1 text-center">
+                    Physical Chips (Not Net Worth)
                   </div>
                   <div className="flex justify-between items-center text-zinc-400 font-medium">
-                    <span>Lent / Borrowed (Today):</span>
-                    <span className="font-mono font-bold text-zinc-200">+{borrowedAmount} / -{lentAmount}</span>
+                    <span>End of Prev Day:</span>
+                    <span className="font-mono font-bold text-zinc-200">{baselineBalance.toLocaleString()}</span>
                   </div>
                   <div className="flex justify-between items-center text-zinc-400 font-medium">
                     <span>Available Bank:</span>
@@ -1565,9 +1564,15 @@ export default function PlayerDashboardTab({
         </div>
 
         {/* Balance Stats Row */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 border-t border-white/5 pt-6">
+        <div className="flex justify-between items-center mt-6 border-t border-white/5 pt-6 pb-2">
+          <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Account Balance</h3>
+          <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider bg-white/5 px-2 py-0.5 rounded">
+            Physical Chips (Not Net Worth)
+          </span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="bg-zinc-950/40 p-4 rounded-2xl border border-white/5">
-            <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Banked Balance</span>
+            <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">End of Prev Day</span>
             <div className="text-xl font-black text-white font-mono mt-1 flex items-center gap-1.5">
               <Wallet className="w-4 h-4 text-zinc-400" />
               {baselineBalance.toLocaleString()}
@@ -1575,16 +1580,7 @@ export default function PlayerDashboardTab({
           </div>
 
           <div className="bg-zinc-950/40 p-4 rounded-2xl border border-white/5">
-            <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Lent / Borrowed (Today)</span>
-            <div className="text-xl font-black font-mono mt-1 flex items-center gap-1">
-              <span className={borrowedAmount > 0 ? "text-emerald-400" : "text-zinc-400"}>+{borrowedAmount}</span>
-              <span className="text-zinc-600">/</span>
-              <span className={lentAmount > 0 ? "text-rose-400" : "text-zinc-400"}>-{lentAmount}</span>
-            </div>
-          </div>
-
-          <div className="bg-zinc-950/40 p-4 rounded-2xl border border-white/5">
-            <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">In Play Today</span>
+            <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Wallet</span>
             <div className="text-xl font-black text-amber-400 font-mono mt-1">
               {activeDeclaration ? ((activeDeclaration.buyIn || 0) + (activeDeclaration.rebuys || 0)).toLocaleString() : '0'}
             </div>

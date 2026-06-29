@@ -542,7 +542,8 @@ export default function App() {
   };
 
   const openLoanModal = () => {
-    setLoanDraft({ borrower: '', lender: '', amount: 0, interest: 10, dayIssued: currentDay, deadlineDay: currentDay + 5 });
+    const loanDay = activeSession ? currentDay : (currentDay + 1);
+    setLoanDraft({ borrower: '', lender: '', amount: 0, interest: 10, dayIssued: loanDay, deadlineDay: loanDay + 5 });
     setShowLoanModal(true);
   };
 
@@ -550,7 +551,7 @@ export default function App() {
     if (!user || !loanDraft.borrower || !loanDraft.lender || loanDraft.amount <= 0) return;
     try {
       const activePlayers = activeSession ? Object.keys(activeSession.ledger || {}) : [];
-      await recordLoanIssuance(db, safeAppId, loanDraft, currentDay, user.uid, activePlayers);
+      await recordLoanIssuance(db, safeAppId, loanDraft, loanDraft.dayIssued, user.uid, activePlayers);
       setShowLoanModal(false);
     } catch (err) {
       console.error('Error saving loan:', err);
