@@ -36,7 +36,15 @@ export function calculatePaydays(dayNumber, config, rawBalances, loans) {
       if (loan.borrower === p.id) borrowed += (principal + interest);
     });
     
-    const balance = Number(rawBalances[p.id] || 0);
+    let balance = Number(player.startBalance || 0);
+    const balanceVal = rawBalances[p.id];
+    if (balanceVal !== undefined && balanceVal !== null) {
+      if (typeof balanceVal === 'object') {
+        balance = Number(balanceVal.bank || 0) + Number(balanceVal.wallet || 0);
+      } else {
+        balance = Number(balanceVal);
+      }
+    }
     const nw = balance + lentOut - borrowed;
     netWorths[p.id] = nw;
     totalCirculation += nw;
@@ -77,10 +85,20 @@ export function calculatePlayerStats(sessions, loans, currentDay, config, balanc
   });
 
   return config.players.map(player => {
-    const currentTableBalance =
-      balances[player.id] !== undefined
-        ? Number(balances[player.id])
-        : Number(player.startBalance || 0);
+    let bank = Number(player.startBalance || 0);
+    let wallet = 0;
+    let currentTableBalance = Number(player.startBalance || 0);
+    if (balances[player.id] !== undefined && balances[player.id] !== null) {
+      const pBal = balances[player.id];
+      if (typeof pBal === 'object') {
+        bank = Number(pBal.bank || 0);
+        wallet = Number(pBal.wallet || 0);
+        currentTableBalance = bank + wallet;
+      } else {
+        bank = Number(pBal);
+        currentTableBalance = bank;
+      }
+    }
 
     let lentOutPrincipal  = 0;
     let lentOutInterest   = 0;
@@ -109,6 +127,8 @@ export function calculatePlayerStats(sessions, loans, currentDay, config, balanc
 
     return {
       ...player,
+      bank,
+      wallet,
       currentTableBalance,
       tablePL,
       salary: totalPaydays[player.id], 

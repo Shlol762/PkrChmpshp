@@ -171,7 +171,17 @@ export default function StatsTab({ config, sessions, loans }) {
       // Sum of balances on this day
       let daySupply = 0;
       config.players.forEach(p => {
-        const bal = s.balances?.[p.id] ?? Number(p.startBalance || 0);
+        const balVal = s.balances?.[p.id];
+        let bal = 0;
+        if (balVal !== undefined && balVal !== null) {
+          if (typeof balVal === 'object') {
+            bal = Number(balVal.bank || 0) + Number(balVal.wallet || 0);
+          } else {
+            bal = Number(balVal);
+          }
+        } else {
+          bal = Number(p.startBalance || 0);
+        }
         daySupply += bal;
       });
 
@@ -354,7 +364,17 @@ export default function StatsTab({ config, sessions, loans }) {
           if (loan.lender === p.id) lentOutPrincipalD += principal;
         });
 
-        const currentBal = s.balances?.[p.id] ?? Number(p.startBalance || 0);
+        const currentBalVal = s.balances?.[p.id];
+        let currentBal = 0;
+        if (currentBalVal !== undefined && currentBalVal !== null) {
+          if (typeof currentBalVal === 'object') {
+            currentBal = Number(currentBalVal.bank || 0) + Number(currentBalVal.wallet || 0);
+          } else {
+            currentBal = Number(currentBalVal);
+          }
+        } else {
+          currentBal = Number(p.startBalance || 0);
+        }
         const expectedBreakEvenD = Number(p.startBalance || 0) + paydaysUpToDay;
         const cumulativeProfitD = (currentBal - borrowedPrincipalD + lentOutPrincipalD) - expectedBreakEvenD;
 
