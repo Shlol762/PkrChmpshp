@@ -25,6 +25,7 @@ import {
   startNewHand
 } from '../utils/pokerGameEngine';
 import { calculatePaydays } from '../utils/pokerEngine';
+import { recordRealtimeCashOut } from '../utils/ledgerEngine';
 
 export default function VirtualTableTab({
   isAuthenticated,
@@ -1005,13 +1006,7 @@ export default function VirtualTableTab({
           const decRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'playerDeclarations', p.id);
           const currentDec = playerDeclarations?.[p.id] || {};
           
-          await setDoc(decRef, {
-            buyIn: currentDec.buyIn !== undefined ? Number(currentDec.buyIn) : Number(p.stack || 0),
-            rebuys: currentDec.rebuys !== undefined ? Number(currentDec.rebuys) : 0,
-            cashOut: refundedStack,
-            status: 'cashed_out',
-            timestamp: new Date().toISOString()
-          });
+          await recordRealtimeCashOut(db, safeAppId, p.id, refundedStack, latestSession.dayNumber, 'admin');
         }
 
         const targetDocRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGame', tableId);

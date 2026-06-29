@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { doc, setDoc, addDoc, collection, updateDoc, getDoc } from 'firebase/firestore';
-import { db, safeAppId } from '../firebase';
+import { db, safeAppId, auth } from '../firebase';
+import { recordRealtimeBuyIn, recordRealtimeRebuy, recordRealtimeCashOut, approveLoanRequest, recordLoanSettlement } from '../utils/ledgerEngine';
 import { 
   User, 
   Coins, 
@@ -297,20 +298,13 @@ export default function PlayerDashboardTab({
     }
 
     try {
-      const currentRebuys = activeDeclaration?.rebuys || 0;
-      const newRebuys = currentRebuys + amount;
-
-      await setDoc(declarationDocRef, {
-        ...activeDeclaration,
-        rebuys: newRebuys,
-        timestamp: new Date().toISOString()
-      }, { merge: true });
+      await recordRealtimeRebuy(db, safeAppId, currentPlayerId, amount, activeSession.dayNumber, auth.currentUser?.uid || currentPlayerId);
 
       triggerMessage('success', `Rebuy of ${amount.toLocaleString()} chips confirmed! Stack will update shortly.`);
       setShowInlineRebuyModal(false);
     } catch (err) {
       console.error(err);
-      triggerMessage('error', 'Failed to submit Rebuy.');
+      triggerMessage('error', 'Failed to submit Rebuy: ' + err.message);
     }
   };
 
@@ -336,22 +330,21 @@ export default function PlayerDashboardTab({
     }
 
     try {
-      await setDoc(declarationDocRef, {
-        buyIn: amount,
-        rebuys: 0,
-        cashOut: 0,
-        status: 'active',
-        timestamp: new Date().toISOString()
-      });
+      await recordRealtimeBuyIn(db, safeAppId, currentPlayerId, amount, activeSession.dayNumber, auth.currentUser?.uid || currentPlayerId);
+      
       // Also write temporary claim to keep session lock verified
       const claimRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'playerClaims', currentPlayerId);
-      await updateDoc(claimRef, { timestamp: new Date().toISOString() });
+      await setDoc(claimRef, {
+        playerId: currentPlayerId,
+        pin: localStorage.getItem('poker_player_pin') || '',
+        timestamp: new Date().toISOString()
+      });
 
       triggerMessage('success', `Successfully bought in for ${amount.toLocaleString()} chips!`);
       setBuyInAmount('');
     } catch (err) {
       console.error(err);
-      triggerMessage('error', 'Failed to submit Buy-In. Please try again.');
+      triggerMessage('error', 'Failed to submit Buy-In: ' + err.message);
     }
   };
 
@@ -374,20 +367,13 @@ export default function PlayerDashboardTab({
     }
 
     try {
-      const currentRebuys = activeDeclaration?.rebuys || 0;
-      const newRebuys = currentRebuys + amount;
-
-      await setDoc(declarationDocRef, {
-        ...activeDeclaration,
-        rebuys: newRebuys,
-        timestamp: new Date().toISOString()
-      }, { merge: true });
+      await recordRealtimeRebuy(db, safeAppId, currentPlayerId, amount, activeSession.dayNumber, auth.currentUser?.uid || currentPlayerId);
 
       triggerMessage('success', `Rebuy of ${amount.toLocaleString()} chips confirmed! Pull them from the case.`);
       setRebuyAmount('');
     } catch (err) {
       console.error(err);
-      triggerMessage('error', 'Failed to submit Rebuy.');
+      triggerMessage('error', 'Failed to submit Rebuy: ' + err.message);
     }
   };
 
@@ -400,18 +386,13 @@ export default function PlayerDashboardTab({
     }
 
     try {
-      await setDoc(declarationDocRef, {
-        ...activeDeclaration,
-        cashOut: amount,
-        status: 'cashed_out',
-        timestamp: new Date().toISOString()
-      }, { merge: true });
+      await recordRealtimeCashOut(db, safeAppId, currentPlayerId, amount, activeSession.dayNumber, auth.currentUser?.uid || currentPlayerId);
 
       triggerMessage('success', `Cash-Out of ${amount.toLocaleString()} chips declared! Leave your physical chips on the table for verification.`);
       setCashOutAmount('');
     } catch (err) {
       console.error(err);
-      triggerMessage('error', 'Failed to submit Cash-Out.');
+      triggerMessage('error', 'Failed to submit Cash-Out: ' + err.message);
     }
   };
 
@@ -454,29 +435,20 @@ export default function PlayerDashboardTab({
 
   const handleApproveLoan = async (loan) => {
     try {
-      const sessionRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'loans', loan.id);
-      await updateDoc(sessionRef, {
-        status: 'active'
-      });
-
-      // Adjust physical table chips in central balances
-      const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
-      const balancesSnap = await getDoc(balancesRef);
-      const newBalances = balancesSnap.exists() ? { ...balancesSnap.data() } : {};
-      const principal = Number(loan.amount);
-
-      const borrowerBal = newBalances[loan.borrower] ?? Number(config.players.find(p => p.id === loan.borrower)?.startBalance || 0);
-      const lenderBal   = newBalances[loan.lender] ?? Number(config.players.find(p => p.id === loan.lender)?.startBalance || 0);
-
-      newBalances[loan.borrower] = borrowerBal + principal;
-      newBalances[loan.lender]   = lenderBal - principal;
-
-      await setDoc(balancesRef, newBalances);
+      const activePlayers = activeSession ? Object.keys(activeSession.ledger || {}) : [];
+      await approveLoanRequest(
+        db,
+        safeAppId,
+        loan.id,
+        activeSession?.dayNumber || currentDay,
+        auth.currentUser?.uid || currentPlayerId,
+        activePlayers
+      );
 
       triggerMessage('success', 'Loan approved and is now active!');
     } catch (err) {
       console.error(err);
-      triggerMessage('error', 'Failed to approve loan.');
+      triggerMessage('error', 'Failed to approve loan: ' + err.message);
     }
   };
 
@@ -506,30 +478,20 @@ export default function PlayerDashboardTab({
 
   const handleApproveSettlement = async (loan) => {
     try {
-      const loanDoc = doc(db, 'artifacts', safeAppId, 'public', 'data', 'loans', loan.id);
-      await updateDoc(loanDoc, {
-        status: 'settled',
-        settledDay: Number(activeSession?.dayNumber || currentDay)
-      });
-
-      // Adjust physical table chips in central balances
-      const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
-      const balancesSnap = await getDoc(balancesRef);
-      const newBalances = balancesSnap.exists() ? { ...balancesSnap.data() } : {};
-      const repayAmount = repaymentAmount(loan);
-
-      const borrowerBal = newBalances[loan.borrower] ?? Number(config.players.find(p => p.id === loan.borrower)?.startBalance || 0);
-      const lenderBal   = newBalances[loan.lender] ?? Number(config.players.find(p => p.id === loan.lender)?.startBalance || 0);
-
-      newBalances[loan.borrower] = borrowerBal - repayAmount;
-      newBalances[loan.lender]   = lenderBal + repayAmount;
-
-      await setDoc(balancesRef, newBalances);
+      const activePlayers = activeSession ? Object.keys(activeSession.ledger || {}) : [];
+      await recordLoanSettlement(
+        db,
+        safeAppId,
+        loan,
+        activeSession?.dayNumber || currentDay,
+        auth.currentUser?.uid || currentPlayerId,
+        activePlayers
+      );
 
       triggerMessage('success', 'Loan marked as settled!');
     } catch (err) {
       console.error(err);
-      triggerMessage('error', 'Failed to settle loan.');
+      triggerMessage('error', 'Failed to settle loan: ' + err.message);
     }
   };
 

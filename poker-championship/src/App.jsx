@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { signInWithCustomToken, signInAnonymously, onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
-import { collection, onSnapshot, doc, setDoc, addDoc, updateDoc, deleteDoc, getDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, addDoc, updateDoc, deleteDoc, getDoc, runTransaction } from 'firebase/firestore';
 import { Trophy, CalendarDays, HandCoins, Settings, Crown, Lock, Unlock, Dices, BookOpen, User, TrendingUp, KeyRound } from 'lucide-react';
 
 // Imports from our new modular files
@@ -11,6 +11,12 @@ import {
   calculatePaydays,
   calculatePlayerStats
 } from './utils/pokerEngine';
+import {
+  commitSessionDay,
+  recordLoanIssuance,
+  recordLoanSettlement,
+  saveBalances as saveBalancesLog
+} from './utils/ledgerEngine';
 
 import PinModal from './components/PinModal';
 import SessionModal from './components/SessionModal';
@@ -18,7 +24,7 @@ import LoanModal from './components/LoanModal';
 import AuditModal from './components/AuditModal';
 
 import LeaderboardTab from './views/LeaderboardTab';
-import SessionsTab from './views/SessionsTab';
+import AccountingTab from './views/AccountingTab';
 import LoansTab from './views/LoansTab';
 import SettingsTab from './views/SettingsTab';
 import VirtualTableTab from './views/VirtualTableTab';
@@ -41,6 +47,7 @@ export default function App() {
   const [loans, setLoans]         = useState([]);
   const [liveGames, setLiveGames] = useState({});
   const [playerDeclarations, setPlayerDeclarations] = useState({});
+  const [transactions, setTransactions] = useState([]);
   const [loading, setLoading]     = useState(true);
 
   const [balances, setBalances]           = useState({});
@@ -139,6 +146,13 @@ export default function App() {
       setPlayerDeclarations(data);
     }, err => console.error('Declarations fetch error:', err));
 
+    const transactionsRef = collection(db, 'artifacts', safeAppId, 'public', 'data', 'transactions');
+    const unsubTransactions = onSnapshot(transactionsRef, snap => {
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      data.sort((a, b) => new Date(b.recordedAt) - new Date(a.recordedAt));
+      setTransactions(data);
+    }, err => console.error('Transactions fetch error:', err));
+
     const unsubBalances = onSnapshot(balancesRef, snap => {
       if (snap.exists()) {
         setBalances(snap.data());
@@ -150,7 +164,15 @@ export default function App() {
       setBalancesLoaded(true);
     }, err => console.error('Balances fetch error:', err));
 
-    return () => { unsubConfig(); unsubSessions(); unsubLoans(); unsubLiveGames(); unsubDeclarations(); unsubBalances(); };
+    return () => {
+      unsubConfig();
+      unsubSessions();
+      unsubLoans();
+      unsubLiveGames();
+      unsubDeclarations();
+      unsubTransactions();
+      unsubBalances();
+    };
   }, [user]);
 
   // Fetch private PINs when admin is authenticated
@@ -214,6 +236,33 @@ export default function App() {
     }
   }, [loading, balancesLoaded, balances, sessions, config, user]);
 
+  // ── Restore Player Claim ──────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!currentPlayerId || !activeSession || !user) return;
+    
+    const checkAndRestoreClaim = async () => {
+      const pin = localStorage.getItem('poker_player_pin');
+      if (!pin) return;
+      
+      const claimRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'playerClaims', currentPlayerId);
+      try {
+        const snap = await getDoc(claimRef);
+        if (!snap.exists()) {
+          console.log(`Re-creating missing player claim for ${currentPlayerId} using stored PIN`);
+          await setDoc(claimRef, {
+            playerId: currentPlayerId,
+            pin,
+            timestamp: new Date().toISOString()
+          });
+        }
+      } catch (err) {
+        console.error("Failed to restore player claim:", err);
+      }
+    };
+    
+    checkAndRestoreClaim();
+  }, [currentPlayerId, activeSession, user]);
+
   // Calculations derived from state (pure computations using utils)
   const playerStats = useMemo(() => {
     return calculatePlayerStats(sessions, loans, currentDay, config, balances);
@@ -273,7 +322,7 @@ export default function App() {
   };
 
   const handleStartDay = async () => {
-    if (!user || !isAuthenticated) return;
+    if (!user) return;
     const nextDay = currentDay + 1;
     if (!window.confirm(`Start game session for Day ${nextDay}?`)) return;
 
@@ -302,11 +351,11 @@ export default function App() {
       const rawBalances = {};
       config.players.forEach(p => {
         const draft = ledgerDraft[p.id];
+        const pBal = balances[p.id] || { bank: 0, wallet: 0 };
+        const prevBal = typeof pBal === 'object' ? Number(pBal.bank || 0) + Number(pBal.wallet || 0) : Number(pBal || 0);
         if (draft && draft.played) {
-          const prevBal = balances[p.id] ?? Number(p.startBalance || 0);
           rawBalances[p.id] = prevBal - draft.buyIn - draft.rebuys + draft.cashOut;
         } else {
-          const prevBal = balances[p.id] ?? Number(p.startBalance || 0);
           rawBalances[p.id] = prevBal;
         }
       });
@@ -314,42 +363,19 @@ export default function App() {
       // 2. Calculate paydays
       const paydaysToDistribute = calculatePaydays(Number(nextDay), config, rawBalances, loans);
       
-      // 3. Final Balances after paydays
-      const finalBalances = {};
-      config.players.forEach(p => {
-        finalBalances[p.id] = rawBalances[p.id] + (paydaysToDistribute[p.id] || 0);
-      });
+      // 3. Atomically commit the session, update balances cache and write transaction logs
+      await commitSessionDay(
+        db,
+        safeAppId,
+        activeSession.id,
+        ledgerDraft,
+        paydaysToDistribute,
+        config,
+        nextDay,
+        user.uid
+      );
 
-      // 4. Update the active session document
-      const sessionRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'sessions', activeSession.id);
-      
-      const finalLedger = {};
-      config.players.forEach(p => {
-        const draft = ledgerDraft[p.id];
-        if (draft && draft.played) {
-          finalLedger[p.id] = {
-            buyIn: draft.buyIn,
-            rebuys: draft.rebuys,
-            cashOut: draft.cashOut,
-            status: 'cashed_out'
-          };
-        }
-      });
-
-      await updateDoc(sessionRef, {
-        status: 'completed',
-        balances: finalBalances,
-        paydaysDistributed: paydaysToDistribute,
-        ledger: finalLedger,
-        recordedAt: new Date().toISOString(),
-        recordedBy: user.uid
-      });
-
-      // 5. Update central balances document
-      const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
-      await setDoc(balancesRef, finalBalances);
-
-      // 5. Clean up temporary playerClaims and playerDeclarations
+      // 4. Clean up temporary playerClaims and playerDeclarations
       for (const p of config.players) {
         try {
           await deleteDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'playerClaims', p.id));
@@ -363,7 +389,7 @@ export default function App() {
       alert(`Day ${nextDay} ledger committed and finalized successfully!`);
     } catch (err) {
       console.error("Error committing ledger:", err);
-      alert("Failed to commit day.");
+      alert("Failed to commit day: " + err.message);
     }
   };
 
@@ -455,8 +481,14 @@ export default function App() {
       const paydaysToDistribute = calculatePaydays(Number(sessionDay), config, sessionDraft, loans);
       
       const finalBalances = {};
+      const nestedBalances = {};
       config.players.forEach(p => {
-        finalBalances[p.id] = (Number(sessionDraft[p.id]) || 0) + (paydaysToDistribute[p.id] || 0);
+        const total = (Number(sessionDraft[p.id]) || 0) + (paydaysToDistribute[p.id] || 0);
+        finalBalances[p.id] = total;
+        nestedBalances[p.id] = {
+          bank: total,
+          wallet: 0
+        };
       });
 
       if (editingSessionId) {
@@ -472,14 +504,32 @@ export default function App() {
           dayNumber:   Number(sessionDay),
           balances:    finalBalances,
           paydaysDistributed: paydaysToDistribute,
+          status: 'completed',
           recordedAt:  new Date().toISOString(),
           recordedBy:  user.uid,
         });
       }
 
-      // Update central balances document
+      // Update central balances document and write transaction logs atomically
       const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
-      await setDoc(balancesRef, finalBalances);
+      await runTransaction(db, async (transaction) => {
+        config.players.forEach(p => {
+          const txRef = doc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'transactions'));
+          const amt = nestedBalances[p.id].bank;
+          transaction.set(txRef, {
+            type: 'BALANCE_RESET',
+            from: null,
+            to: { playerId: p.id, account: 'bank' },
+            amount: amt,
+            sessionDay: Number(sessionDay),
+            sessionId: null,
+            note: `Manual session record balance override: Day ${sessionDay}`,
+            recordedAt: new Date().toISOString(),
+            recordedBy: user.uid
+          });
+        });
+        transaction.set(balancesRef, nestedBalances);
+      });
 
       setShowSessionModal(false);
     } catch (err) { console.error('Error saving session:', err); }
@@ -499,58 +549,28 @@ export default function App() {
   const saveLoan = async () => {
     if (!user || !loanDraft.borrower || !loanDraft.lender || loanDraft.amount <= 0) return;
     try {
-      // 1. Add the loan document
-      await addDoc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'loans'), {
-        ...loanDraft, status: 'active', recordedAt: new Date().toISOString(), recordedBy: user.uid,
-      });
-
-      // 2. Adjust physical table chips in the central balances
-      const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
-      const newBalances = { ...balances };
-      const principal = Number(loanDraft.amount);
-
-      const borrowerBal = newBalances[loanDraft.borrower] ?? Number(config.players.find(p => p.id === loanDraft.borrower)?.startBalance || 0);
-      const lenderBal   = newBalances[loanDraft.lender] ?? Number(config.players.find(p => p.id === loanDraft.lender)?.startBalance || 0);
-
-      newBalances[loanDraft.borrower] = borrowerBal + principal;
-      newBalances[loanDraft.lender]   = lenderBal - principal;
-
-      await setDoc(balancesRef, newBalances);
-
+      const activePlayers = activeSession ? Object.keys(activeSession.ledger || {}) : [];
+      await recordLoanIssuance(db, safeAppId, loanDraft, currentDay, user.uid, activePlayers);
       setShowLoanModal(false);
     } catch (err) {
       console.error('Error saving loan:', err);
-      alert("Failed to issue loan.");
+      alert("Failed to issue loan: " + err.message);
     }
   };
 
   const toggleLoanStatus = async (loan) => {
     if (!user) return;
     try {
-      const isSettling = loan.status === 'active';
-      const repayAmount = repaymentAmount(loan);
-
-      await updateDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'loans', loan.id), {
-        status: isSettling ? 'settled' : 'active',
-        settledDay: isSettling ? currentDay : null,
-      });
-
-      // Adjust physical table chips in the central balances
-      const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
-      const newBalances = { ...balances };
-      const borrowerBal = newBalances[loan.borrower] ?? Number(config.players.find(p=>p.id===loan.borrower)?.startBalance || 0);
-      const lenderBal   = newBalances[loan.lender] ?? Number(config.players.find(p=>p.id===loan.lender)?.startBalance || 0);
-
-      if (isSettling) {
-        newBalances[loan.borrower] = borrowerBal - repayAmount;
-        newBalances[loan.lender]   = lenderBal + repayAmount;
+      const activePlayers = activeSession ? Object.keys(activeSession.ledger || {}) : [];
+      if (loan.status === 'active') {
+        await recordLoanSettlement(db, safeAppId, loan, currentDay, user.uid, activePlayers);
       } else {
-        newBalances[loan.borrower] = borrowerBal + repayAmount;
-        newBalances[loan.lender]   = lenderBal - repayAmount;
+        alert("Reactivating settled loans is not supported. Create a new loan if needed.");
       }
-
-      await setDoc(balancesRef, newBalances);
-    } catch (err) { console.error('Error updating loan:', err); }
+    } catch (err) {
+      console.error('Error updating loan:', err);
+      alert("Failed to settle loan: " + err.message);
+    }
   };
 
   const getPlayerName = id => config.players.find(p => p.id === id)?.name || id;
@@ -562,18 +582,11 @@ export default function App() {
   const saveBalances = async () => {
     if (!user) return;
     try {
-      const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
-      
-      const cleanedBalances = {};
-      Object.entries(balancesDraft).forEach(([pid, val]) => {
-        cleanedBalances[pid] = Number(val) || 0;
-      });
-
-      await setDoc(balancesRef, cleanedBalances);
+      await saveBalancesLog(db, safeAppId, balancesDraft, config, user.uid);
       alert("Current balances updated successfully!");
     } catch (err) {
       console.error("Error saving balances:", err);
-      alert("Failed to save balances.");
+      alert("Failed to save balances: " + err.message);
     }
   };
 
@@ -607,7 +620,7 @@ export default function App() {
     { id: 'playerDashboard', icon: User, label: 'My Dashboard' },
     { id: 'dashboard',    icon: Trophy,       label: 'Leaderboard' },
     { id: 'stats',        icon: TrendingUp,   label: 'Stats' },
-    { id: 'sessions',     icon: CalendarDays, label: 'Sessions' },
+    { id: 'sessions',     icon: CalendarDays, label: 'Accounting' },
     { id: 'loans',        icon: HandCoins,    label: 'Loans' },
     ...(isAuthenticated ? [{ id: 'virtualTable', icon: Dices, label: 'Virtual Table Manager' }] : []),
     { id: 'rules',        icon: BookOpen,     label: 'Rules' },
@@ -698,6 +711,7 @@ export default function App() {
                 nextPaydayIn={nextPaydayIn}
                 playerStats={playerStats}
                 loans={loans}
+                activeSession={activeSession}
               />
             )}
 
@@ -710,7 +724,7 @@ export default function App() {
             )}
  
             {activeTab === 'sessions' && (
-              <SessionsTab
+              <AccountingTab
                 isAuthenticated={isAuthenticated}
                 openSessionModal={openSessionModal}
                 sessions={sessions}
@@ -720,6 +734,7 @@ export default function App() {
                 onStartDay={handleStartDay}
                 onOpenAudit={() => setShowAuditModal(true)}
                 playerDeclarations={playerDeclarations}
+                transactions={transactions}
               />
             )}
  
