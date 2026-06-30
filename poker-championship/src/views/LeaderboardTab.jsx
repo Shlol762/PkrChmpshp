@@ -11,7 +11,8 @@ export default function LeaderboardTab({
   nextPaydayIn,
   playerStats,
   loans = [],
-  activeSession = null
+  activeSession = null,
+  playerDeclarations = {}
 }) {
   const [expandedCards, setExpandedCards] = useState(() => {
     return new Set(playerStats?.length > 0 ? [playerStats[0].id] : []);
@@ -175,7 +176,7 @@ export default function LeaderboardTab({
                     {/* Condensed & Expanded Row Toggle */}
                     {!expandedCards.has(stat.id) ? (
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-2 gap-y-1.5 text-xs font-medium text-zinc-400 mt-1 pl-12 pointer-events-none pr-2">
-                        {activeSession ? (
+                        {activeSession && playerDeclarations?.[stat.id]?.status === 'active' ? (
                           <div className="flex items-center gap-3 text-zinc-500">
                             <span className="flex items-center gap-1"><Landmark className="w-3.5 h-3.5 text-zinc-600"/> {displayBank.toLocaleString()}</span>
                             <span className="opacity-40">|</span>
@@ -183,7 +184,7 @@ export default function LeaderboardTab({
                           </div>
                         ) : (
                           <motion.div layoutId={`phys-box-${stat.id}`} className="flex items-center justify-start gap-1.5 truncate text-amber-100/90 rounded-lg overflow-hidden" title="Physical Balance">
-                            <motion.div layoutId={`phys-icon-${stat.id}`}><Wallet className="w-3.5 h-3.5 shrink-0 text-amber-500/80" /></motion.div> 
+                            <motion.div layoutId={`phys-icon-${stat.id}`}><Landmark className="w-3.5 h-3.5 shrink-0 text-amber-500/80" /></motion.div> 
                             <motion.span layoutId={`phys-val-${stat.id}`} className="truncate">{displayTableBalance.toLocaleString()}</motion.span>
                           </motion.div>
                         )}
@@ -231,7 +232,7 @@ export default function LeaderboardTab({
                         
                         {/* Physical Balance */}
                         <motion.div layoutId={`phys-box-${stat.id}`} className="bg-black/20 border border-white/5 rounded-lg py-1.5 px-2 flex flex-col h-full text-center overflow-hidden">
-                          {activeSession ? (
+                          {activeSession && playerDeclarations?.[stat.id]?.status === 'active' ? (
                             <div className="flex flex-col h-full justify-between gap-1 w-full">
                               <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest flex items-center justify-center gap-1">
                                 <Landmark className="w-2.5 h-2.5 text-sky-400"/> Bank & Wallet
@@ -244,7 +245,7 @@ export default function LeaderboardTab({
                           ) : (
                             <>
                               <motion.span layout="position" className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest flex items-center justify-center gap-1 min-h-[14px]">
-                                <motion.div layoutId={`phys-icon-${stat.id}`}><Wallet className="w-3 h-3 text-amber-500/80"/></motion.div> Physical
+                                <motion.div layoutId={`phys-icon-${stat.id}`}><Landmark className="w-3 h-3 text-amber-500/80"/></motion.div> Physical
                               </motion.span>
                               <motion.div layout="position" className="flex flex-col items-center justify-center mt-auto w-full">
                                 <motion.div layout="position" className="flex flex-col items-center justify-center mt-1.5 mb-0.5">

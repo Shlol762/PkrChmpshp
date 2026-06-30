@@ -433,7 +433,9 @@ export default function PlayerDashboardTab({
 
   const handleApproveLoan = async (loan) => {
     try {
-      const activePlayers = activeSession ? Object.keys(activeSession.ledger || {}) : [];
+      const activePlayers = activeSession
+        ? Object.entries(playerDeclarations || {}).filter(([, d]) => d?.status === 'active').map(([id]) => id)
+        : [];
       await approveLoanRequest(
         db,
         safeAppId,
@@ -476,7 +478,9 @@ export default function PlayerDashboardTab({
 
   const handleApproveSettlement = async (loan) => {
     try {
-      const activePlayers = activeSession ? Object.keys(activeSession.ledger || {}) : [];
+      const activePlayers = activeSession
+        ? Object.entries(playerDeclarations || {}).filter(([, d]) => d?.status === 'active').map(([id]) => id)
+        : [];
       await recordLoanSettlement(
         db,
         safeAppId,

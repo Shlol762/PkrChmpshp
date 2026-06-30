@@ -550,7 +550,9 @@ export default function App() {
   const saveLoan = async () => {
     if (!user || !loanDraft.borrower || !loanDraft.lender || loanDraft.amount <= 0) return;
     try {
-      const activePlayers = activeSession ? Object.keys(activeSession.ledger || {}) : [];
+      const activePlayers = activeSession
+        ? Object.entries(playerDeclarations || {}).filter(([, d]) => d?.status === 'active').map(([id]) => id)
+        : [];
       await recordLoanIssuance(db, safeAppId, loanDraft, loanDraft.dayIssued, user.uid, activePlayers);
       setShowLoanModal(false);
     } catch (err) {
@@ -562,7 +564,9 @@ export default function App() {
   const toggleLoanStatus = async (loan) => {
     if (!user) return;
     try {
-      const activePlayers = activeSession ? Object.keys(activeSession.ledger || {}) : [];
+      const activePlayers = activeSession
+        ? Object.entries(playerDeclarations || {}).filter(([, d]) => d?.status === 'active').map(([id]) => id)
+        : [];
       if (loan.status === 'active') {
         await recordLoanSettlement(db, safeAppId, loan, currentDay, user.uid, activePlayers);
       } else {
@@ -713,6 +717,7 @@ export default function App() {
                 playerStats={playerStats}
                 loans={loans}
                 activeSession={activeSession}
+                playerDeclarations={playerDeclarations}
               />
             )}
 
