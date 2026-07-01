@@ -40,6 +40,7 @@ export default function PlayerDashboardTab({
   const [cashOutAmount, setCashOutAmount] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Loan Form State
   const [showLoanForm, setShowLoanForm] = useState(false);
@@ -319,6 +320,7 @@ export default function PlayerDashboardTab({
 
   const handleBuyIn = async (e) => {
     e.preventDefault();
+    if (isSubmitting) return;
     if (!declarationDocRef) return;
     const amount = Number(buyInAmount);
     if (isNaN(amount) || amount <= 0) {
@@ -336,6 +338,7 @@ export default function PlayerDashboardTab({
       return;
     }
 
+    setIsSubmitting(true);
     try {
       await recordRealtimeBuyIn(db, safeAppId, currentPlayerId, amount, activeSession.dayNumber, auth.currentUser?.uid || currentPlayerId);
       
@@ -353,11 +356,14 @@ export default function PlayerDashboardTab({
     } catch (err) {
       console.error(err);
       triggerMessage('error', 'Failed to submit Buy-In: ' + err.message);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleRebuy = async (e) => {
     e.preventDefault();
+    if (isSubmitting) return;
     const amount = Number(rebuyAmount);
     if (isNaN(amount) || amount <= 0) {
       triggerMessage('error', 'Please enter a valid Rebuy amount.');
@@ -374,6 +380,7 @@ export default function PlayerDashboardTab({
       return;
     }
 
+    setIsSubmitting(true);
     try {
       await recordRealtimeRebuy(db, safeAppId, currentPlayerId, amount, activeSession.dayNumber, auth.currentUser?.uid || currentPlayerId);
 
@@ -382,17 +389,21 @@ export default function PlayerDashboardTab({
     } catch (err) {
       console.error(err);
       triggerMessage('error', 'Failed to submit Rebuy: ' + err.message);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleCashOut = async (e) => {
     e.preventDefault();
+    if (isSubmitting) return;
     const amount = Number(cashOutAmount);
     if (isNaN(amount) || amount < 0) {
       triggerMessage('error', 'Please enter a valid Cash-Out amount.');
       return;
     }
 
+    setIsSubmitting(true);
     try {
       await recordRealtimeCashOut(db, safeAppId, currentPlayerId, amount, activeSession.dayNumber, auth.currentUser?.uid || currentPlayerId);
 
@@ -401,12 +412,15 @@ export default function PlayerDashboardTab({
     } catch (err) {
       console.error(err);
       triggerMessage('error', 'Failed to submit Cash-Out: ' + err.message);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   // Loans Handlers
   const handleRequestLoan = async (e) => {
     e.preventDefault();
+    if (isSubmitting) return;
     const amount = Number(loanAmount);
     if (!loanLender) {
       triggerMessage('error', 'Please select a lender.');
@@ -417,6 +431,7 @@ export default function PlayerDashboardTab({
       return;
     }
 
+    setIsSubmitting(true);
     try {
       await addDoc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'loans'), {
         borrower: currentPlayerId,
@@ -438,10 +453,14 @@ export default function PlayerDashboardTab({
     } catch (err) {
       console.error(err);
       triggerMessage('error', 'Failed to submit loan request.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleApproveLoan = async (loan) => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
     try {
       const activePlayers = activeSession
         ? Object.entries(playerDeclarations || {}).filter(([, d]) => d?.status === 'active').map(([id]) => id)
@@ -459,21 +478,29 @@ export default function PlayerDashboardTab({
     } catch (err) {
       console.error(err);
       triggerMessage('error', 'Failed to approve loan: ' + err.message);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleDeclineLoan = async (loan) => {
+    if (isSubmitting) return;
     if (!window.confirm("Decline and delete this loan request?")) return;
+    setIsSubmitting(true);
     try {
       const loanDoc = doc(db, 'artifacts', safeAppId, 'public', 'data', 'loans', loan.id);
       await updateDoc(loanDoc, { status: 'declined' });
       triggerMessage('success', 'Loan request declined.');
     } catch (err) {
       console.error(err);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleRequestSettlement = async (loan) => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
     try {
       const loanDoc = doc(db, 'artifacts', safeAppId, 'public', 'data', 'loans', loan.id);
       await updateDoc(loanDoc, {
@@ -483,10 +510,14 @@ export default function PlayerDashboardTab({
       triggerMessage('success', 'Settlement requested! Waiting for the other player to confirm receipt of chips.');
     } catch (err) {
       console.error(err);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleApproveSettlement = async (loan) => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
     try {
       const activePlayers = activeSession
         ? Object.entries(playerDeclarations || {}).filter(([, d]) => d?.status === 'active').map(([id]) => id)
@@ -504,10 +535,14 @@ export default function PlayerDashboardTab({
     } catch (err) {
       console.error(err);
       triggerMessage('error', 'Failed to settle loan: ' + err.message);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleDeclineSettlement = async (loan) => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
     try {
       const loanDoc = doc(db, 'artifacts', safeAppId, 'public', 'data', 'loans', loan.id);
       await updateDoc(loanDoc, {
@@ -517,6 +552,8 @@ export default function PlayerDashboardTab({
       triggerMessage('success', 'Settlement request declined. Loan returned to active status.');
     } catch (err) {
       console.error(err);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -844,9 +881,10 @@ export default function PlayerDashboardTab({
 
             <button
               type="submit"
-              className="w-full py-2 bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold text-xs rounded-lg transition-colors cursor-pointer"
+              disabled={isSubmitting}
+              className="w-full py-2 bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold text-xs rounded-lg transition-colors cursor-pointer disabled:opacity-50 disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed"
             >
-              Send Loan Request
+              {isSubmitting ? 'Processing...' : 'Send Loan Request'}
             </button>
           </form>
         )}
@@ -1472,11 +1510,11 @@ export default function PlayerDashboardTab({
 
               <button
                 type="submit"
-                disabled={maxAllowedBuyIn <= 0}
+                disabled={maxAllowedBuyIn <= 0 || isSubmitting}
                 className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold rounded-xl transition-all flex items-center justify-center gap-2 text-sm shadow-[0_0_15px_rgba(245,158,11,0.1)] cursor-pointer disabled:opacity-50 disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed"
               >
                 <Coins className="w-4 h-4" />
-                <span>Confirm Buy-In & Seat Request</span>
+                <span>{isSubmitting ? 'Processing...' : 'Confirm Buy-In & Seat Request'}</span>
               </button>
             </form>
           </div>
@@ -1697,11 +1735,11 @@ export default function PlayerDashboardTab({
 
                       <button
                         type="submit"
-                        disabled={maxAllowedBuyIn <= 0}
+                        disabled={maxAllowedBuyIn <= 0 || isSubmitting}
                         className="w-full py-3 bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold rounded-xl transition-all flex items-center justify-center gap-2 text-sm shadow-[0_0_15px_rgba(245,158,11,0.1)] cursor-pointer disabled:opacity-50 disabled:bg-zinc-800 disabled:text-zinc-500 disabled:shadow-none disabled:cursor-not-allowed animate-none"
                       >
                         <Coins className="w-4 h-4" />
-                        <span>Confirm Buy-In & Start Playing</span>
+                        <span>{isSubmitting ? 'Processing...' : 'Confirm Buy-In & Start Playing'}</span>
                       </button>
                     </form>
                   );
@@ -1776,11 +1814,11 @@ export default function PlayerDashboardTab({
                           )}
                           <button
                             type="submit"
-                            disabled={maxAllowedRebuy <= 0}
+                            disabled={maxAllowedRebuy <= 0 || isSubmitting}
                             className="px-5 bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold rounded-xl text-xs transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed animate-none"
                           >
                             <Plus className="w-3.5 h-3.5" />
-                            <span>Rebuy</span>
+                            <span>{isSubmitting ? 'Processing...' : 'Rebuy'}</span>
                           </button>
                         </div>
                         {maxAllowedRebuy <= 0 && (
@@ -1807,10 +1845,11 @@ export default function PlayerDashboardTab({
                           />
                           <button
                             type="submit"
-                            className="px-6 bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-bold rounded-xl text-xs transition-colors flex items-center gap-1.5 cursor-pointer border border-transparent"
+                            disabled={isSubmitting}
+                            className="px-6 bg-emerald-500 hover:bg-emerald-400 text-emerald-950 font-bold rounded-xl text-xs transition-colors flex items-center gap-1.5 cursor-pointer border border-transparent disabled:opacity-50 disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed"
                           >
                             <Check className="w-3.5 h-3.5" />
-                            <span>Cash Out</span>
+                            <span>{isSubmitting ? 'Processing...' : 'Cash Out'}</span>
                           </button>
                         </div>
                       </form>

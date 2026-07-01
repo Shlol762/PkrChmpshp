@@ -8,7 +8,8 @@ export default function LoanModal({
   loanDraft,
   setLoanDraft,
   saveLoan,
-  config
+  config,
+  isSubmitting = false
 }) {
   if (!isOpen) return null;
 
@@ -112,10 +113,10 @@ export default function LoanModal({
 
           <button
             onClick={saveLoan}
-            disabled={!loanDraft.borrower || !loanDraft.lender || loanDraft.borrower === loanDraft.lender || loanDraft.amount <= 0}
+            disabled={!loanDraft.borrower || !loanDraft.lender || loanDraft.borrower === loanDraft.lender || loanDraft.amount <= 0 || isSubmitting}
             className="w-full py-4 rounded-xl font-bold bg-amber-500 text-amber-950 hover:bg-amber-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed mt-2"
           >
-            Issue Loan
+            {isSubmitting ? 'Processing...' : 'Issue Loan'}
           </button>
         </div>
       </div>

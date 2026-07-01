@@ -8,7 +8,8 @@ export default function LoansTab({
   loans,
   currentDay,
   toggleLoanStatus,
-  getPlayerName
+  getPlayerName,
+  isSubmitting = false
 }) {
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
@@ -50,13 +51,14 @@ export default function LoansTab({
                 {isAuthenticated && (
                   <button
                     onClick={() => toggleLoanStatus(loan)}
-                    className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors ${
+                    disabled={isSubmitting}
+                    className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors disabled:opacity-55 disabled:cursor-not-allowed ${
                       loan.status === 'active'
                         ? 'bg-zinc-800 hover:bg-emerald-500/20 text-zinc-300 hover:text-emerald-400'
                         : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'
                     }`}
                   >
-                    {loan.status === 'active' ? 'Settle' : 'Re-open'}
+                    {isSubmitting ? 'Processing...' : (loan.status === 'active' ? 'Settle' : 'Re-open')}
                   </button>
                 )}
               </div>

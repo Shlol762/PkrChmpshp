@@ -49,6 +49,7 @@ export default function App() {
   const [playerDeclarations, setPlayerDeclarations] = useState({});
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading]     = useState(true);
+  const [isSubmittingLoan, setIsSubmittingLoan] = useState(false);
 
   const [balances, setBalances]           = useState({});
   const [balancesDraft, setBalancesDraft] = useState({});
@@ -563,7 +564,8 @@ export default function App() {
   };
 
   const saveLoan = async () => {
-    if (!user || !loanDraft.borrower || !loanDraft.lender || loanDraft.amount <= 0) return;
+    if (!user || !loanDraft.borrower || !loanDraft.lender || loanDraft.amount <= 0 || isSubmittingLoan) return;
+    setIsSubmittingLoan(true);
     try {
       const activePlayers = activeSession
         ? Object.entries(playerDeclarations || {}).filter(([, d]) => d?.status === 'active').map(([id]) => id)
@@ -573,11 +575,14 @@ export default function App() {
     } catch (err) {
       console.error('Error saving loan:', err);
       alert("Failed to issue loan: " + err.message);
+    } finally {
+      setIsSubmittingLoan(false);
     }
   };
 
   const toggleLoanStatus = async (loan) => {
-    if (!user) return;
+    if (!user || isSubmittingLoan) return;
+    setIsSubmittingLoan(true);
     try {
       const activePlayers = activeSession
         ? Object.entries(playerDeclarations || {}).filter(([, d]) => d?.status === 'active').map(([id]) => id)
@@ -590,6 +595,8 @@ export default function App() {
     } catch (err) {
       console.error('Error updating loan:', err);
       alert("Failed to settle loan: " + err.message);
+    } finally {
+      setIsSubmittingLoan(false);
     }
   };
 
@@ -767,6 +774,7 @@ export default function App() {
                 currentDay={currentDay}
                 toggleLoanStatus={toggleLoanStatus}
                 getPlayerName={getPlayerName}
+                isSubmitting={isSubmittingLoan}
               />
             )}
  
@@ -856,6 +864,7 @@ export default function App() {
         setLoanDraft={setLoanDraft}
         saveLoan={saveLoan}
         config={config}
+        isSubmitting={isSubmittingLoan}
       />
 
       <AuditModal
