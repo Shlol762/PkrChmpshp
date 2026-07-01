@@ -3,24 +3,11 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // Helper: Checks if the user is signed in as an Admin (with email/password)
-    // Anonymous users do not have an email address in their token.
     function isAdmin() {
       return request.auth != null && request.auth.token.email != null;
     }
 
-    // Helper: Retrieve the secret PIN for a player
-    function getPlayerPin(playerId) {
-      let path = /databases/$(database)/documents/privateData/pins/players/$(playerId);
-      return exists(path) ? get(path).data.pin : "0000";
-    }
-
-    // Helper: Checks if a player has a valid claim doc with the current user's auth UID
-    function isPlayerClaimOwner(appId, playerId) {
-      let path = /databases/$(database)/documents/artifacts/$(appId)/public/data/playerClaims/$(playerId);
-      return exists(path) && get(path).data.uid == request.auth.uid;
-    }
-
-    // Helper: Verify if the balances map conforms to the new nested {bank, wallet} schema
+    // Helper: Verify if the balances map conforms to the nested {bank, wallet} schema
     function isValidBalancesSchema(balances) {
       return balances.keys().size() == 0 || 
              (balances[balances.keys()[0]] is map && 
@@ -55,61 +42,6 @@ service cloud.firestore {
       );
     }
 
-    // Helper: Checks if the balance for a key changed and is owned by the writer
-    function hasOwnedChange(appId, before, after, keys, idx) {
-      return idx < keys.size() && 
-             before[keys[idx]] != after[keys[idx]] && 
-             isPlayerClaimOwner(appId, keys[idx]);
-    }
-
-    // Helper: Checks if at least one changed key is owned by the writer
-    function isAnyChangedKeyOwned(appId, before, after, keys) {
-      return (keys.size() > 0 && hasOwnedChange(appId, before, after, keys, 0)) ||
-             (keys.size() > 1 && hasOwnedChange(appId, before, after, keys, 1)) ||
-             (keys.size() > 2 && hasOwnedChange(appId, before, after, keys, 2)) ||
-             (keys.size() > 3 && hasOwnedChange(appId, before, after, keys, 3)) ||
-             (keys.size() > 4 && hasOwnedChange(appId, before, after, keys, 4)) ||
-             (keys.size() > 5 && hasOwnedChange(appId, before, after, keys, 5)) ||
-             (keys.size() > 6 && hasOwnedChange(appId, before, after, keys, 6)) ||
-             (keys.size() > 7 && hasOwnedChange(appId, before, after, keys, 7)) ||
-             (keys.size() > 8 && hasOwnedChange(appId, before, after, keys, 8)) ||
-             (keys.size() > 9 && hasOwnedChange(appId, before, after, keys, 9)) ||
-             (keys.size() > 10 && hasOwnedChange(appId, before, after, keys, 10)) ||
-             (keys.size() > 11 && hasOwnedChange(appId, before, after, keys, 11)) ||
-             (keys.size() > 12 && hasOwnedChange(appId, before, after, keys, 12)) ||
-             (keys.size() > 13 && hasOwnedChange(appId, before, after, keys, 13)) ||
-             (keys.size() > 14 && hasOwnedChange(appId, before, after, keys, 14)) ||
-             (keys.size() > 15 && hasOwnedChange(appId, before, after, keys, 15));
-    }
-
-    // Helper: Counts the number of changed keys
-    function countChangedKeys(before, after, keys) {
-      return (keys.size() > 0 && before[keys[0]] != after[keys[0]] ? 1 : 0) +
-             (keys.size() > 1 && before[keys[1]] != after[keys[1]] ? 1 : 0) +
-             (keys.size() > 2 && before[keys[2]] != after[keys[2]] ? 1 : 0) +
-             (keys.size() > 3 && before[keys[3]] != after[keys[3]] ? 1 : 0) +
-             (keys.size() > 4 && before[keys[4]] != after[keys[4]] ? 1 : 0) +
-             (keys.size() > 5 && before[keys[5]] != after[keys[5]] ? 1 : 0) +
-             (keys.size() > 6 && before[keys[6]] != after[keys[6]] ? 1 : 0) +
-             (keys.size() > 7 && before[keys[7]] != after[keys[7]] ? 1 : 0) +
-             (keys.size() > 8 && before[keys[8]] != after[keys[8]] ? 1 : 0) +
-             (keys.size() > 9 && before[keys[9]] != after[keys[9]] ? 1 : 0) +
-             (keys.size() > 10 && before[keys[10]] != after[keys[10]] ? 1 : 0) +
-             (keys.size() > 11 && before[keys[11]] != after[keys[11]] ? 1 : 0) +
-             (keys.size() > 12 && before[keys[12]] != after[keys[12]] ? 1 : 0) +
-             (keys.size() > 13 && before[keys[13]] != after[keys[13]] ? 1 : 0) +
-             (keys.size() > 14 && before[keys[14]] != after[keys[14]] ? 1 : 0) +
-             (keys.size() > 15 && before[keys[15]] != after[keys[15]] ? 1 : 0);
-    }
-
-    // Helper: Loop-unrolled check for all keys
-    function hasValidClaimAndChange(appId, before, after) {
-      let keys = before.keys();
-      return isSumEqual(before, after, keys) &&
-             countChangedKeys(before, after, keys) <= 2 &&
-             isAnyChangedKeyOwned(appId, before, after, keys);
-    }
-
     // 1. Private data (PINs) - Admin only
     match /privateData/{document=**} {
       allow read, write: if isAdmin();
@@ -120,38 +52,36 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isAdmin();
     }
+
     match /artifacts/{appId}/public/data/sessions/{docId} {
       allow read: if true;
       allow create, update: if isAdmin() && isValidBalancesSchema(request.resource.data.balances);
       allow delete: if isAdmin();
     }
+
     match /artifacts/{appId}/public/data/balances/{docId} {
       allow read: if true;
       allow write: if isAdmin();
       allow update: if request.auth != null && (
         isAdmin() || (
           isValidBalancesSchema(request.resource.data) &&
-          hasValidClaimAndChange(appId, resource.data, request.resource.data)
+          isSumEqual(resource.data, request.resource.data, resource.data.keys())
         )
       );
     }
+
     match /artifacts/{appId}/public/data/loans/{docId} {
       allow read: if true;
       allow write: if isAdmin() || (
         request.auth != null && (
-          // If creating: borrower or lender UID must match their claim
+          // If creating: amount must be positive and borrower != lender
           (request.method == 'create' && (
             request.resource.data.amount > 0 &&
             request.resource.data.interest >= 0 &&
-            request.resource.data.borrower != request.resource.data.lender &&
-            (isPlayerClaimOwner(appId, request.resource.data.borrower) ||
-             isPlayerClaimOwner(appId, request.resource.data.lender))
+            request.resource.data.borrower != request.resource.data.lender
           )) ||
-          // If updating: borrower or lender UID must match their claim
-          (request.method == 'update' && (
-            isPlayerClaimOwner(appId, resource.data.borrower) ||
-            isPlayerClaimOwner(appId, resource.data.lender)
-          ))
+          // If updating: allowed for authenticated users (to approve/settle/decline)
+          (request.method == 'update')
         )
       );
     }
@@ -162,46 +92,33 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // 3b. Transactions Log (Read by everyone, written by authenticated users/engine)
+    // 3b. Transactions Log (Read by everyone, written by authenticated users)
     match /artifacts/{appId}/public/data/transactions/{docId} {
       allow read: if true;
-      allow write: if isAdmin() || (
-        request.auth != null && 
-        request.resource.data.amount > 0 &&
-        (
-          (request.resource.data.from != null && request.resource.data.from.playerId != null && isPlayerClaimOwner(appId, request.resource.data.from.playerId)) ||
-          (request.resource.data.to != null && request.resource.data.to.playerId != null && isPlayerClaimOwner(appId, request.resource.data.to.playerId))
+      allow write: if request.auth != null && request.resource.data.amount > 0;
+    }
+
+    // 4. Seat Claims verification (Anyone authenticated can write/read their claim)
+    match /artifacts/{appId}/public/data/playerClaims/{playerId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // 4b. Player Declarations (Read by anyone, writeable by authenticated users)
+    match /artifacts/{appId}/public/data/playerDeclarations/{playerId} {
+      allow read: if true;
+      allow write: if request.auth != null && (
+        isAdmin() || (
+          (!request.resource.data.keys().hasAny(['buyIn']) || request.resource.data.buyIn >= 0) &&
+          (!request.resource.data.keys().hasAny(['rebuys']) || request.resource.data.rebuys >= 0) &&
+          (!request.resource.data.keys().hasAny(['cashOut']) || request.resource.data.cashOut >= 0)
         )
       );
     }
 
-    // 4. Seat Claims verification (Only claim owner or admin can read; ONLY matches PIN + sets UID on write)
-    match /artifacts/{appId}/public/data/playerClaims/{playerId} {
-      allow read: if isAdmin() || (request.auth != null && resource.data.uid == request.auth.uid);
-      allow delete: if isAdmin();
-      allow create, update: if request.auth != null 
-                            && request.resource.data.pin == getPlayerPin(playerId)
-                            && request.resource.data.uid == request.auth.uid;
-    }
-
-    // 4b. Player Declarations (Read by anyone, writeable if Admin or player claim UID matches auth UID)
-    match /artifacts/{appId}/public/data/playerDeclarations/{playerId} {
-      allow read: if true;
-      allow write: if isAdmin() || (
-        request.auth != null && 
-        isPlayerClaimOwner(appId, playerId) &&
-        (!request.resource.data.keys().hasAny(['buyIn']) || request.resource.data.buyIn >= 0) &&
-        (!request.resource.data.keys().hasAny(['rebuys']) || request.resource.data.rebuys >= 0) &&
-        (!request.resource.data.keys().hasAny(['cashOut']) || request.resource.data.cashOut >= 0)
-      );
-    }
-
-    // 5. Live Game Commands (Only claim owner can submit a turn action)
+    // 5. Live Game Commands (Only authenticated users can submit a command)
     match /artifacts/{appId}/public/data/liveGameCommands/{commandId} {
       allow read, delete: if isAdmin();
-      allow create: if request.auth != null 
-                    && request.resource.data.playerId != null
-                    && isPlayerClaimOwner(appId, request.resource.data.playerId);
+      allow create: if request.auth != null;
     }
   }
 }
