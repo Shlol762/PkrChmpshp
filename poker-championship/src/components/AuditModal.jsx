@@ -8,16 +8,12 @@ export default function AuditModal({
   config,
   sessions,
   onCommit,
-  playerDeclarations
+  playerDeclarations,
+  balances = {}
 }) {
   const [ledgerDraft, setLedgerDraft] = useState({});
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-
-  // Find latest completed session for starting balance reference
-  const latestCompletedSession = useMemo(() => {
-    return sessions.find(s => s.id !== activeSession?.id && s.status !== 'active');
-  }, [sessions, activeSession]);
 
   // Initialize draft when modal opens
   useEffect(() => {
@@ -70,7 +66,13 @@ export default function AuditModal({
           ...prev[playerId],
           played: !isCurrentlyPlaying,
           status: !isCurrentlyPlaying ? 'active' : 'did_not_play',
-          buyIn: !isCurrentlyPlaying ? (latestCompletedSession?.balances?.[playerId] ?? Number(config.players.find(p => p.id === playerId)?.startBalance || 0)) : 0,
+          buyIn: !isCurrentlyPlaying ? (() => {
+            const val = balances[playerId];
+            if (val !== undefined && val !== null) {
+              return typeof val === 'object' ? Number(val.bank || 0) : Number(val);
+            }
+            return Number(config.players.find(p => p.id === playerId)?.startBalance || 0);
+          })() : 0,
           rebuys: 0,
           cashOut: 0
         }

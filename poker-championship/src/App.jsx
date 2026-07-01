@@ -217,10 +217,20 @@ export default function App() {
 
       const initialBalances = {};
       config.players.forEach(p => {
-        initialBalances[p.id] =
-          latestSession?.balances?.[p.id] !== undefined
-            ? Number(latestSession.balances[p.id])
-            : Number(p.startBalance || 0);
+        const val = latestSession?.balances?.[p.id];
+        let bank = 0;
+        let wallet = 0;
+        if (val !== undefined && val !== null) {
+          if (typeof val === 'object') {
+            bank = Number(val.bank || 0);
+            wallet = Number(val.wallet || 0);
+          } else {
+            bank = Number(val);
+          }
+        } else {
+          bank = Number(p.startBalance || 0);
+        }
+        initialBalances[p.id] = { bank, wallet };
       });
 
       try {
@@ -252,6 +262,7 @@ export default function App() {
           await setDoc(claimRef, {
             playerId: currentPlayerId,
             pin,
+            uid: user.uid,
             timestamp: new Date().toISOString()
           });
         }
@@ -308,6 +319,7 @@ export default function App() {
       await setDoc(claimRef, {
         playerId,
         pin,
+        uid: auth.currentUser?.uid || null,
         timestamp: new Date().toISOString()
       });
       setCurrentPlayerId(playerId);
@@ -450,7 +462,10 @@ export default function App() {
       setSessionDay(sessionToEdit.dayNumber);
       const draft = {};
       config.players.forEach(p => {
-        const finalBal = Number(sessionToEdit.balances?.[p.id] || 0);
+        const val = sessionToEdit.balances?.[p.id];
+        const finalBal = typeof val === 'object' && val !== null
+          ? Number(val.bank || 0) + Number(val.wallet || 0)
+          : Number(val || 0);
         const payday = Number(sessionToEdit.paydaysDistributed?.[p.id] || 0);
         draft[p.id] = finalBal - payday;
       });
@@ -494,7 +509,7 @@ export default function App() {
       if (editingSessionId) {
         await setDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'sessions', editingSessionId), {
           dayNumber:   Number(sessionDay),
-          balances:    finalBalances,
+          balances:    nestedBalances,
           paydaysDistributed: paydaysToDistribute,
           recordedAt:  new Date().toISOString(),
           recordedBy:  user.uid,
@@ -502,7 +517,7 @@ export default function App() {
       } else {
         await addDoc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'sessions'), {
           dayNumber:   Number(sessionDay),
-          balances:    finalBalances,
+          balances:    nestedBalances,
           paydaysDistributed: paydaysToDistribute,
           status: 'completed',
           recordedAt:  new Date().toISOString(),
@@ -851,6 +866,7 @@ export default function App() {
         sessions={sessions}
         onCommit={handleCommitDay}
         playerDeclarations={playerDeclarations}
+        balances={balances}
       />
     </div>
   );

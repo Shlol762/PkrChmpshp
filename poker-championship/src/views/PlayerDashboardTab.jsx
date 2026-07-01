@@ -83,7 +83,11 @@ export default function PlayerDashboardTab({
 
   const baselineBalance = useMemo(() => {
     if (!currentPlayerId) return 0;
-    return latestCompletedSession?.balances?.[currentPlayerId] ?? Number(player?.startBalance || 0);
+    const val = latestCompletedSession?.balances?.[currentPlayerId];
+    if (val !== undefined && val !== null) {
+      return typeof val === 'object' ? Number(val.bank || 0) : Number(val);
+    }
+    return Number(player?.startBalance || 0);
   }, [latestCompletedSession, player, currentPlayerId]);
 
   // Player's declaration for today
@@ -244,7 +248,12 @@ export default function PlayerDashboardTab({
         profit = cashOut - totalInvestment;
       }
       
-      currentNW = s.balances?.[currentPlayerId] ?? (currentNW + profit + payday);
+      const balVal = s.balances?.[currentPlayerId];
+      const balNum = typeof balVal === 'object' && balVal !== null 
+        ? Number(balVal.bank || 0) + Number(balVal.wallet || 0)
+        : (balVal !== undefined && balVal !== null ? Number(balVal) : null);
+
+      currentNW = balNum !== null ? balNum : (currentNW + profit + payday);
       
       return {
         dayNumber: s.dayNumber,
@@ -335,6 +344,7 @@ export default function PlayerDashboardTab({
       await setDoc(claimRef, {
         playerId: currentPlayerId,
         pin: localStorage.getItem('poker_player_pin') || '',
+        uid: auth.currentUser?.uid || null,
         timestamp: new Date().toISOString()
       });
 
@@ -1063,6 +1073,7 @@ export default function PlayerDashboardTab({
                   await setDoc(claimRef, {
                     playerId: claimPlayerId,
                     pin: claimPin,
+                    uid: auth.currentUser?.uid || null,
                     timestamp: new Date().toISOString()
                   });
                   setCurrentPlayerId(claimPlayerId);

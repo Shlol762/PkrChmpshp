@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { doc, setDoc, deleteDoc, addDoc, collection, onSnapshot } from 'firebase/firestore';
-import { db, safeAppId } from '../firebase';
+import { db, safeAppId, auth } from '../firebase';
 import {
   Trophy,
   Play,
@@ -87,11 +87,13 @@ export default function VirtualTableTab({
         if (declaration && declaration.status === 'active') {
           acc[p.id] = Number(declaration.buyIn || 0) + Number(declaration.rebuys || 0);
         } else {
-          acc[p.id] = Number(latestCompletedSession?.balances?.[p.id] ?? p.startBalance ?? 0);
+          const val = latestCompletedSession?.balances?.[p.id];
+          acc[p.id] = typeof val === 'object' && val !== null ? Number(val.bank || 0) + Number(val.wallet || 0) : Number(val ?? p.startBalance ?? 0);
         }
       } else {
-        const lastKnownBalance = latestSession?.balances?.[p.id] ?? Number(p.startBalance || 0);
-        acc[p.id] = Number(lastKnownBalance);
+        const lastKnownVal = latestSession?.balances?.[p.id];
+        const lastKnownBalance = typeof lastKnownVal === 'object' && lastKnownVal !== null ? Number(lastKnownVal.bank || 0) + Number(lastKnownVal.wallet || 0) : Number(lastKnownVal ?? (p.startBalance || 0));
+        acc[p.id] = lastKnownBalance;
       }
       return acc;
     }, {});
@@ -221,8 +223,9 @@ export default function VirtualTableTab({
       } else if (dec) {
         stack = Number(dec.buyIn || 0) + Number(dec.rebuys || 0);
       } else {
-        const baseline = sessions?.[0]?.balances?.[playerId] ?? config.players.find(p => p.id === playerId)?.startBalance ?? 0;
-        stack = Number(baseline);
+        const val = sessions?.[0]?.balances?.[playerId];
+        const baseline = typeof val === 'object' && val !== null ? Number(val.bank || 0) + Number(val.wallet || 0) : Number(val ?? config.players.find(p => p.id === playerId)?.startBalance ?? 0);
+        stack = baseline;
       }
 
       // 1. Remove from current table if they were on one
@@ -1217,6 +1220,7 @@ export default function VirtualTableTab({
                   await setDoc(claimRef, {
                     playerId: claimPlayerId,
                     pin: claimPin,
+                    uid: auth.currentUser?.uid || null,
                     timestamp: new Date().toISOString()
                   });
                   // If write succeeds, PIN is valid per database rules!

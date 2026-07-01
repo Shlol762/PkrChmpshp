@@ -76,7 +76,9 @@ export default function SessionModal({
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {config.players.map(p => {
               const currentBal = Number(sessionDraft[p.id] || 0);
-              const isEdited = currentBal !== (sessions[0]?.balances?.[p.id] ?? Number(p.startBalance || 0));
+              const val = sessions[0]?.balances?.[p.id];
+              const baselineVal = typeof val === 'object' && val !== null ? Number(val.bank || 0) + Number(val.wallet || 0) : Number(val || 0);
+              const isEdited = currentBal !== (val !== undefined && val !== null ? baselineVal : Number(p.startBalance || 0));
               const projectedWelfare = projectedPaydays[p.id] || 0;
 
               return (
