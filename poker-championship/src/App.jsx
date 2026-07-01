@@ -256,19 +256,31 @@ export default function App() {
       if (!pin) return;
       
       const claimRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'playerClaims', currentPlayerId);
-      try {
-        const snap = await getDoc(claimRef);
-        if (!snap.exists() || snap.data().uid !== user.uid) {
-          console.log(`Re-creating missing or stale player claim for ${currentPlayerId} using stored PIN`);
+      
+      const writeClaim = async () => {
+        try {
           await setDoc(claimRef, {
             playerId: currentPlayerId,
             pin,
             uid: user.uid,
             timestamp: new Date().toISOString()
           });
+          console.log(`Successfully restored player claim for ${currentPlayerId}`);
+        } catch (writeErr) {
+          console.error("Failed to write player claim:", writeErr);
+        }
+      };
+
+      try {
+        const snap = await getDoc(claimRef);
+        if (!snap.exists() || snap.data().uid !== user.uid) {
+          console.log(`Re-creating missing or stale player claim for ${currentPlayerId} using stored PIN`);
+          await writeClaim();
         }
       } catch (err) {
-        console.error("Failed to restore player claim:", err);
+        // If read fails (e.g. Permission Denied because document belongs to another UID), overwrite it
+        console.log(`Stale or unreadable claim for ${currentPlayerId}, updating claim document...`);
+        await writeClaim();
       }
     };
     
