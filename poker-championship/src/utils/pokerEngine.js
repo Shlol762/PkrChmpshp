@@ -84,7 +84,7 @@ export function calculatePlayerStats(sessions, loans, currentDay, config, balanc
     }
   });
 
-  return config.players.map(player => {
+  const sorted = config.players.map(player => {
     let bank = Number(player.startBalance || 0);
     let wallet = 0;
     let currentTableBalance = Number(player.startBalance || 0);
@@ -150,4 +150,6 @@ export function calculatePlayerStats(sessions, loans, currentDay, config, balanc
     const bPct = bBaseline === 0 ? 0 : b.tablePL / bBaseline;
     return bPct - aPct;
   });
+
+  return sorted.map((p, idx) => ({ ...p, rank: idx + 1 }));
 }
