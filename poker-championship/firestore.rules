@@ -13,38 +13,120 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/privateData/pins/players/$(playerId)).data.pin;
     }
 
+    // Helper: Checks if a player has a valid claim doc with the current user's auth UID
+    function isPlayerClaimOwner(appId, playerId) {
+      return get(/databases/$(database)/documents/artifacts/$(appId)/public/data/playerClaims/$(playerId)).data.uid == request.auth.uid;
+    }
+
+    // Helper: Verify if the balances map conforms to the new nested {bank, wallet} schema
+    function isValidBalancesSchema(balances) {
+      return balances.keys().size() == 0 || 
+             (balances[balances.keys()[0]] is map && 
+              balances[balances.keys()[0]].keys().hasAll(['bank', 'wallet']));
+    }
+
+    // Helper: Get player balance (bank + wallet) safely
+    function getPlayerBalance(data, keys, idx) {
+      return idx < keys.size() ? (data[keys[idx]].bank + data[keys[idx]].wallet) : 0;
+    }
+
+    // Helper: Verify if the total sum of balances remains unchanged (zero-sum)
+    function isSumEqual(before, after, keys) {
+      return (
+        getPlayerBalance(before, keys, 0) + getPlayerBalance(before, keys, 1) +
+        getPlayerBalance(before, keys, 2) + getPlayerBalance(before, keys, 3) +
+        getPlayerBalance(before, keys, 4) + getPlayerBalance(before, keys, 5) +
+        getPlayerBalance(before, keys, 6) + getPlayerBalance(before, keys, 7) +
+        getPlayerBalance(before, keys, 8) + getPlayerBalance(before, keys, 9) +
+        getPlayerBalance(before, keys, 10) + getPlayerBalance(before, keys, 11) +
+        getPlayerBalance(before, keys, 12) + getPlayerBalance(before, keys, 13) +
+        getPlayerBalance(before, keys, 14) + getPlayerBalance(before, keys, 15)
+      ) == (
+        getPlayerBalance(after, keys, 0) + getPlayerBalance(after, keys, 1) +
+        getPlayerBalance(after, keys, 2) + getPlayerBalance(after, keys, 3) +
+        getPlayerBalance(after, keys, 4) + getPlayerBalance(after, keys, 5) +
+        getPlayerBalance(after, keys, 6) + getPlayerBalance(after, keys, 7) +
+        getPlayerBalance(after, keys, 8) + getPlayerBalance(after, keys, 9) +
+        getPlayerBalance(after, keys, 10) + getPlayerBalance(after, keys, 11) +
+        getPlayerBalance(after, keys, 12) + getPlayerBalance(after, keys, 13) +
+        getPlayerBalance(after, keys, 14) + getPlayerBalance(after, keys, 15)
+      );
+    }
+
+    // Helper: Validate a specific player's action
+    function isPlayerActionValid(appId, before, after, keys, idx) {
+      let key = keys[idx];
+      let isOwner = isPlayerClaimOwner(appId, key);
+      let totalBefore = before[key].bank + before[key].wallet;
+      let totalAfter = after.keys().hasAll([key]) ? (after[key].bank + after[key].wallet) : 0;
+      let didDecrease = totalAfter < totalBefore;
+      let isSingleKeyChange = after.diff(before).affectedKeys().hasOnly([key]);
+      let isZeroSum = isSumEqual(before, after, keys);
+      return isOwner && (isSingleKeyChange || (isZeroSum && didDecrease));
+    }
+
+    // Helper: Loop-unrolled check for all keys
+    function hasValidClaimAndChange(appId, before, after) {
+      let keys = before.keys();
+      return (keys.size() > 0 && isPlayerActionValid(appId, before, after, keys, 0)) ||
+             (keys.size() > 1 && isPlayerActionValid(appId, before, after, keys, 1)) ||
+             (keys.size() > 2 && isPlayerActionValid(appId, before, after, keys, 2)) ||
+             (keys.size() > 3 && isPlayerActionValid(appId, before, after, keys, 3)) ||
+             (keys.size() > 4 && isPlayerActionValid(appId, before, after, keys, 4)) ||
+             (keys.size() > 5 && isPlayerActionValid(appId, before, after, keys, 5)) ||
+             (keys.size() > 6 && isPlayerActionValid(appId, before, after, keys, 6)) ||
+             (keys.size() > 7 && isPlayerActionValid(appId, before, after, keys, 7)) ||
+             (keys.size() > 8 && isPlayerActionValid(appId, before, after, keys, 8)) ||
+             (keys.size() > 9 && isPlayerActionValid(appId, before, after, keys, 9)) ||
+             (keys.size() > 10 && isPlayerActionValid(appId, before, after, keys, 10)) ||
+             (keys.size() > 11 && isPlayerActionValid(appId, before, after, keys, 11)) ||
+             (keys.size() > 12 && isPlayerActionValid(appId, before, after, keys, 12)) ||
+             (keys.size() > 13 && isPlayerActionValid(appId, before, after, keys, 13)) ||
+             (keys.size() > 14 && isPlayerActionValid(appId, before, after, keys, 14)) ||
+             (keys.size() > 15 && isPlayerActionValid(appId, before, after, keys, 15));
+    }
+
     // 1. Private data (PINs) - Admin only
     match /privateData/{document=**} {
       allow read, write: if isAdmin();
     }
 
-    // 2. Configurations & Ledgers (Read by everyone, written by Admin only)
+    // 2. Configurations & Ledgers
     match /artifacts/{appId}/public/data/config/{docId} {
       allow read: if true;
       allow write: if isAdmin();
     }
     match /artifacts/{appId}/public/data/sessions/{docId} {
       allow read: if true;
-      allow create: if request.auth != null;
-      allow update, delete: if isAdmin();
+      allow create, update: if isAdmin() && isValidBalancesSchema(request.resource.data.balances);
+      allow delete: if isAdmin();
     }
     match /artifacts/{appId}/public/data/balances/{docId} {
       allow read: if true;
-      allow write: if request.auth != null;
+      allow write: if isAdmin();
+      allow update: if request.auth != null && (
+        isAdmin() || (
+          isValidBalancesSchema(request.resource.data) &&
+          hasValidClaimAndChange(appId, resource.data, request.resource.data)
+        )
+      );
     }
     match /artifacts/{appId}/public/data/loans/{docId} {
       allow read: if true;
       allow write: if isAdmin() || (
         request.auth != null && (
-          // If creating: borrower or lender PIN must match their claim
+          // If creating: borrower or lender UID must match their claim
           (request.method == 'create' && (
-            getPlayerPin(request.resource.data.borrower) == get(/databases/$(database)/documents/artifacts/$(appId)/public/data/playerClaims/$(request.resource.data.borrower)).data.pin ||
-            getPlayerPin(request.resource.data.lender) == get(/databases/$(database)/documents/artifacts/$(appId)/public/data/playerClaims/$(request.resource.data.lender)).data.pin
+            request.resource.data.amount > 0 &&
+            request.resource.data.interest >= 0 &&
+            request.resource.data.borrower != request.resource.data.lender &&
+            (isPlayerClaimOwner(appId, request.resource.data.borrower) ||
+             isPlayerClaimOwner(appId, request.resource.data.lender))
           )) ||
-          // If updating: borrower or lender PIN must match their claim
+          // If updating: borrower or lender UID must match their claim
           (request.method == 'update' && (
-            getPlayerPin(resource.data.borrower) == get(/databases/$(database)/documents/artifacts/$(appId)/public/data/playerClaims/$(resource.data.borrower)).data.pin ||
-            getPlayerPin(resource.data.lender) == get(/databases/$(database)/documents/artifacts/$(appId)/public/data/playerClaims/$(resource.data.lender)).data.pin
+            isPlayerClaimOwner(appId, resource.data.borrower) ||
+            isPlayerClaimOwner(appId, resource.data.lender)
           ))
         )
       );
@@ -59,30 +141,42 @@ service cloud.firestore {
     // 3b. Transactions Log (Read by everyone, written by authenticated users/engine)
     match /artifacts/{appId}/public/data/transactions/{docId} {
       allow read: if true;
-      allow write: if request.auth != null;
+      allow write: if isAdmin() || (
+        request.auth != null && 
+        request.resource.data.amount > 0 &&
+        request.resource.data.from != null &&
+        request.resource.data.from.playerId != null &&
+        isPlayerClaimOwner(appId, request.resource.data.from.playerId)
+      );
     }
 
-    // 4. Seat Claims verification (Anyone can verify a claim, but ONLY if the PIN matches)
+    // 4. Seat Claims verification (Only claim owner or admin can read; ONLY matches PIN + sets UID on write)
     match /artifacts/{appId}/public/data/playerClaims/{playerId} {
-      allow read: if true; // Let everyone read claim status to check if a seat is taken or player is logged in
+      allow read: if isAdmin() || (request.auth != null && resource.data.uid == request.auth.uid);
       allow delete: if isAdmin();
       allow create, update: if request.auth != null 
-                            && request.resource.data.pin == getPlayerPin(playerId);
+                            && request.resource.data.pin == getPlayerPin(playerId)
+                            && request.resource.data.uid == request.auth.uid;
     }
 
-    // 4b. Player Declarations (Read by anyone, writeable if Admin or player claim PIN matches private PIN)
+    // 4b. Player Declarations (Read by anyone, writeable if Admin or player claim UID matches auth UID)
     match /artifacts/{appId}/public/data/playerDeclarations/{playerId} {
       allow read: if true;
-      allow write: if isAdmin() || (request.auth != null 
-                    && getPlayerPin(playerId) == get(/databases/$(database)/documents/artifacts/$(appId)/public/data/playerClaims/$(playerId)).data.pin);
+      allow write: if isAdmin() || (
+        request.auth != null && 
+        isPlayerClaimOwner(appId, playerId) &&
+        (!request.resource.data.keys().hasAny(['buyIn']) || request.resource.data.buyIn >= 0) &&
+        (!request.resource.data.keys().hasAny(['rebuys']) || request.resource.data.rebuys >= 0) &&
+        (!request.resource.data.keys().hasAny(['cashOut']) || request.resource.data.cashOut >= 0)
+      );
     }
 
-    // 5. Live Game Commands (Anyone can submit a turn action, but ONLY if the PIN matches)
+    // 5. Live Game Commands (Only claim owner can submit a turn action)
     match /artifacts/{appId}/public/data/liveGameCommands/{commandId} {
       allow read, delete: if isAdmin();
       allow create: if request.auth != null 
                     && request.resource.data.playerId != null
-                    && request.resource.data.pin == getPlayerPin(request.resource.data.playerId);
+                    && isPlayerClaimOwner(appId, request.resource.data.playerId);
     }
   }
 }
