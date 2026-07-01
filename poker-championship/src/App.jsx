@@ -258,8 +258,8 @@ export default function App() {
       const claimRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'playerClaims', currentPlayerId);
       try {
         const snap = await getDoc(claimRef);
-        if (!snap.exists()) {
-          console.log(`Re-creating missing player claim for ${currentPlayerId} using stored PIN`);
+        if (!snap.exists() || snap.data().uid !== user.uid) {
+          console.log(`Re-creating missing or stale player claim for ${currentPlayerId} using stored PIN`);
           await setDoc(claimRef, {
             playerId: currentPlayerId,
             pin,
