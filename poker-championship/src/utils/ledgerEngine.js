@@ -18,6 +18,17 @@ export const recordLoanIssuance = async (db, safeAppId, loanDraft, currentDay, u
     const lender = loanDraft.lender;
     const amount = Number(loanDraft.amount);
 
+    if (borrower === lender) {
+      throw new Error("Lender and Borrower cannot be the same player.");
+    }
+
+    if (isNaN(amount) || amount <= 0) {
+      throw new Error("Loan amount must be a positive number.");
+    }
+    if (Number(loanDraft.interest || 0) < 0) {
+      throw new Error("Interest rate must be non-negative.");
+    }
+
     const isLenderActive = activePlayers.includes(lender);
     const isBorrowerActive = activePlayers.includes(borrower);
 
@@ -143,6 +154,9 @@ export const commitSessionDay = async (db, safeAppId, sessionId, ledgerDraft, pa
 
   await runTransaction(db, async (transaction) => {
     const sessionDoc = await transaction.get(sessionRef);
+    if (sessionDoc.exists() && sessionDoc.data().status === 'completed') {
+      throw new Error("Session is already finalized and committed.");
+    }
     const wasActive = sessionDoc.exists() && sessionDoc.data().status === 'active';
 
     const balancesDoc = await transaction.get(balancesRef);
@@ -190,41 +204,38 @@ export const commitSessionDay = async (db, safeAppId, sessionId, ledgerDraft, pa
               amount: draft.rebuys,
             });
           }
-
-          // Record CASH_OUT
-          bank += draft.cashOut;
-          sessionTxs.push({
-            type: 'CASH_OUT',
-            from: { playerId: p.id, account: 'wallet' },
-            to: { playerId: p.id, account: 'bank' },
-            amount: draft.cashOut,
-          });
-
-          // Record SESSION_CLOSE for table win/loss
-          const netPlay = draft.cashOut - (draft.buyIn + draft.rebuys);
-          if (netPlay > 0) {
-            sessionTxs.push({
-              type: 'SESSION_CLOSE',
-              from: null,
-              to: { playerId: p.id, account: 'wallet' },
-              amount: netPlay,
-            });
-          } else if (netPlay < 0) {
-            sessionTxs.push({
-              type: 'SESSION_CLOSE',
-              from: { playerId: p.id, account: 'wallet' },
-              to: null,
-              amount: -netPlay,
-            });
-          }
-
-          // Update balances in cache memory
-          balances[p.id] = { bank, wallet: 0 };
-        } else {
-          // If it WAS active, the bank was already decremented/incremented in real-time.
-          // We just need to make sure the final wallet cache is cleared to 0 (which it should be).
-          balances[p.id] = { bank, wallet: 0 };
         }
+
+        // Both wasActive and !wasActive must apply cashOut, CASH_OUT log, and SESSION_CLOSE log
+        // Record CASH_OUT
+        bank += draft.cashOut;
+        sessionTxs.push({
+          type: 'CASH_OUT',
+          from: { playerId: p.id, account: 'wallet' },
+          to: { playerId: p.id, account: 'bank' },
+          amount: draft.cashOut,
+        });
+
+        // Record SESSION_CLOSE for table win/loss
+        const netPlay = draft.cashOut - (draft.buyIn + draft.rebuys);
+        if (netPlay > 0) {
+          sessionTxs.push({
+            type: 'SESSION_CLOSE',
+            from: null,
+            to: { playerId: p.id, account: 'wallet' },
+            amount: netPlay,
+          });
+        } else if (netPlay < 0) {
+          sessionTxs.push({
+            type: 'SESSION_CLOSE',
+            from: { playerId: p.id, account: 'wallet' },
+            to: null,
+            amount: -netPlay,
+          });
+        }
+
+        // Update balances in cache memory
+        balances[p.id] = { bank, wallet: 0 };
       }
     });
 
@@ -316,6 +327,9 @@ export const saveBalances = async (db, safeAppId, balancesDraft, config, userId)
 };
 
 export const recordRealtimeBuyIn = async (db, safeAppId, playerId, amount, currentDay, userId) => {
+  if (isNaN(amount) || amount <= 0) {
+    throw new Error("Buy-in amount must be a positive number.");
+  }
   const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
   const decRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'playerDeclarations', playerId);
   const txRef = doc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'transactions'));
@@ -363,6 +377,9 @@ export const recordRealtimeBuyIn = async (db, safeAppId, playerId, amount, curre
 };
 
 export const recordRealtimeRebuy = async (db, safeAppId, playerId, amount, currentDay, userId) => {
+  if (isNaN(amount) || amount <= 0) {
+    throw new Error("Rebuy amount must be a positive number.");
+  }
   const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
   const decRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'playerDeclarations', playerId);
   const txRef = doc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'transactions'));
@@ -411,6 +428,9 @@ export const recordRealtimeRebuy = async (db, safeAppId, playerId, amount, curre
 };
 
 export const recordRealtimeCashOut = async (db, safeAppId, playerId, amount, currentDay, userId) => {
+  if (isNaN(amount) || amount < 0) {
+    throw new Error("Cash-out amount must be a non-negative number.");
+  }
   const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
   const decRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'playerDeclarations', playerId);
 
@@ -427,55 +447,9 @@ export const recordRealtimeCashOut = async (db, safeAppId, playerId, amount, cur
     const bank = Number(playerBal.bank || 0);
 
     balances[playerId] = {
-      bank: bank + amount,
+      bank, // Keep bank balance as-is; it will be updated during host audit/commit
       wallet: 0
     };
-
-    // 1. CASH_OUT transaction
-    const txRef1 = doc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'transactions'));
-    transaction.set(txRef1, {
-      type: 'CASH_OUT',
-      from: { playerId, account: 'wallet' },
-      to: { playerId, account: 'bank' },
-      amount,
-      sessionDay: Number(currentDay),
-      sessionId: null,
-      note: `Real-time cash-out: ${playerId}`,
-      recordedAt: new Date().toISOString(),
-      recordedBy: userId
-    });
-
-    // 2. SESSION_CLOSE transaction
-    const totalInvested = Number(decData.buyIn || 0) + Number(decData.rebuys || 0);
-    const netPlay = amount - totalInvested;
-
-    if (netPlay > 0) {
-      const txRef2 = doc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'transactions'));
-      transaction.set(txRef2, {
-        type: 'SESSION_CLOSE',
-        from: null,
-        to: { playerId, account: 'wallet' },
-        amount: netPlay,
-        sessionDay: Number(currentDay),
-        sessionId: null,
-        note: `Real-time table win: ${playerId}`,
-        recordedAt: new Date().toISOString(),
-        recordedBy: userId
-      });
-    } else if (netPlay < 0) {
-      const txRef2 = doc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'transactions'));
-      transaction.set(txRef2, {
-        type: 'SESSION_CLOSE',
-        from: { playerId, account: 'wallet' },
-        to: null,
-        amount: -netPlay,
-        sessionDay: Number(currentDay),
-        sessionId: null,
-        note: `Real-time table loss: ${playerId}`,
-        recordedAt: new Date().toISOString(),
-        recordedBy: userId
-      });
-    }
 
     transaction.set(decRef, {
       ...decData,
@@ -505,6 +479,10 @@ export const approveLoanRequest = async (db, safeAppId, loanId, currentDay, user
     const borrower = loan.borrower;
     const lender = loan.lender;
     const amount = Number(loan.amount);
+
+    if (borrower === lender) {
+      throw new Error("Lender and Borrower cannot be the same player.");
+    }
 
     const isLenderActive = activePlayers.includes(lender);
     const isBorrowerActive = activePlayers.includes(borrower);
