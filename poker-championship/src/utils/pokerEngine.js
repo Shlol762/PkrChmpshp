@@ -36,7 +36,7 @@ export function calculatePaydays(dayNumber, config, rawBalances, loans) {
       if (loan.borrower === p.id) borrowed += (principal + interest);
     });
     
-    let balance = Number(player.startBalance || 0);
+    let balance = Number(p.startBalance || 0);
     const balanceVal = rawBalances[p.id];
     if (balanceVal !== undefined && balanceVal !== null) {
       if (typeof balanceVal === 'object') {

@@ -170,7 +170,7 @@ export function startNewHand(state) {
     stage: 'PRE_FLOP',
     dealerIndex: nextDealerIndex,
     players: updatedPlayers,
-    pot: 0,
+    pot: sbPosted + bbPosted,
     highestBet,
     previousHighestBet: 0,
     actingPlayerIndex,
