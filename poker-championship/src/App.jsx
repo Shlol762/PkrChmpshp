@@ -461,65 +461,79 @@ export default function App() {
     if (sessionToEdit && typeof sessionToEdit === 'object' && sessionToEdit.id) {
       setEditingSessionId(sessionToEdit.id);
       setSessionDay(sessionToEdit.dayNumber);
-      const draft = {};
-      config.players.forEach(p => {
-        const val = sessionToEdit.balances?.[p.id];
-        const finalBal = typeof val === 'object' && val !== null
-          ? Number(val.bank || 0) + Number(val.wallet || 0)
-          : Number(val || 0);
-        const payday = Number(sessionToEdit.paydaysDistributed?.[p.id] || 0);
-        draft[p.id] = finalBal - payday;
-      });
-      setSessionDraft(draft);
     } else {
       setEditingSessionId(null);
-      const nextDay = currentDay + 1;
-
-      const draft = {};
-      config.players.forEach(p => {
-        const lastKnownBalance = balances[p.id] ?? Number(p.startBalance || 0);
-        draft[p.id] = lastKnownBalance;
-      });
-
-      setSessionDraft(draft);
-      setSessionDay(nextDay);
+      setSessionDay(currentDay + 1);
     }
     setShowSessionModal(true);
   };
 
-  const handleSessionDraftChange = (playerId, val) => {
-    setSessionDraft(prev => ({ ...prev, [playerId]: val === '' ? '' : Number(val) }));
-  };
-
-  const saveSession = async () => {
+  const saveSession = async (ledgerDraft, dayNumber) => {
     if (!user) return;
     try {
-      const paydaysToDistribute = calculatePaydays(Number(sessionDay), config, sessionDraft, loans);
-      
-      const finalBalances = {};
-      const nestedBalances = {};
+      // 1. Get previous balances for calculation reference
+      const getPreviousBalance = (playerId) => {
+        const prevSession = sessions
+          .filter(s => s.id !== editingSessionId)
+          .find(s => Number(s.dayNumber) < Number(dayNumber));
+        if (prevSession) {
+          const val = prevSession.balances?.[playerId];
+          return typeof val === 'object' && val !== null ? Number(val.bank || 0) + Number(val.wallet || 0) : Number(val || 0);
+        }
+        return Number(config.players.find(p => p.id === playerId)?.startBalance || 0);
+      };
+
+      // 2. Compute rawBalances (poker chip balance before payday distribution)
+      const rawBalances = {};
       config.players.forEach(p => {
-        const total = (Number(sessionDraft[p.id]) || 0) + (paydaysToDistribute[p.id] || 0);
-        finalBalances[p.id] = total;
+        const draft = ledgerDraft[p.id];
+        const prevBal = getPreviousBalance(p.id);
+        if (draft && draft.played) {
+          rawBalances[p.id] = prevBal - draft.buyIn - draft.rebuys + draft.cashOut;
+        } else {
+          rawBalances[p.id] = prevBal;
+        }
+      });
+
+      // 3. Calculate projected paydays to distribute
+      const paydaysToDistribute = calculatePaydays(Number(dayNumber), config, rawBalances, loans);
+      
+      const nestedBalances = {};
+      const finalLedger = {};
+
+      config.players.forEach(p => {
+        const total = rawBalances[p.id] + (paydaysToDistribute[p.id] || 0);
         nestedBalances[p.id] = {
           bank: total,
           wallet: 0
         };
+
+        const draft = ledgerDraft[p.id];
+        if (draft && draft.played) {
+          finalLedger[p.id] = {
+            buyIn: draft.buyIn,
+            rebuys: draft.rebuys,
+            cashOut: draft.cashOut,
+            status: 'cashed_out'
+          };
+        }
       });
 
       if (editingSessionId) {
         await setDoc(doc(db, 'artifacts', safeAppId, 'public', 'data', 'sessions', editingSessionId), {
-          dayNumber:   Number(sessionDay),
+          dayNumber:   Number(dayNumber),
           balances:    nestedBalances,
           paydaysDistributed: paydaysToDistribute,
+          ledger:      finalLedger,
           recordedAt:  new Date().toISOString(),
           recordedBy:  user.uid,
         }, { merge: true });
       } else {
         await addDoc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'sessions'), {
-          dayNumber:   Number(sessionDay),
+          dayNumber:   Number(dayNumber),
           balances:    nestedBalances,
           paydaysDistributed: paydaysToDistribute,
+          ledger:      finalLedger,
           status: 'completed',
           recordedAt:  new Date().toISOString(),
           recordedBy:  user.uid,
@@ -537,9 +551,9 @@ export default function App() {
             from: null,
             to: { playerId: p.id, account: 'bank' },
             amount: amt,
-            sessionDay: Number(sessionDay),
+            sessionDay: Number(dayNumber),
             sessionId: null,
-            note: `Manual session record balance override: Day ${sessionDay}`,
+            note: `Manual session record balance override: Day ${dayNumber}`,
             recordedAt: new Date().toISOString(),
             recordedBy: user.uid
           });
@@ -548,7 +562,10 @@ export default function App() {
       });
 
       setShowSessionModal(false);
-    } catch (err) { console.error('Error saving session:', err); }
+    } catch (err) {
+      console.error('Error saving session:', err);
+      alert('Failed to save session: ' + err.message);
+    }
   };
 
   const deleteSession = async (id) => {
@@ -849,12 +866,12 @@ export default function App() {
         onClose={() => setShowSessionModal(false)}
         sessionDay={sessionDay}
         setSessionDay={setSessionDay}
-        sessionDraft={sessionDraft}
-        handleSessionDraftChange={handleSessionDraftChange}
+        editingSessionId={editingSessionId}
         saveSession={saveSession}
         config={config}
         sessions={sessions}
         loans={loans}
+        balances={balances}
       />
  
       <LoanModal
