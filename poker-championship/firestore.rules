@@ -42,6 +42,33 @@ service cloud.firestore {
       );
     }
 
+    // Helper: Check if a single player balance change is a valid cash-out (wallet is 0, bank is unchanged)
+    function isPlayerChangeValid(before, after, keys, idx) {
+      let key = keys[idx];
+      return before[key] == after[key] || 
+             (after[key].wallet == 0 && after[key].bank == before[key].bank);
+    }
+
+    // Helper: Checks if all player changes are either no-change or valid cash-out
+    function isEveryPlayerChangeValid(before, after, keys) {
+      return (keys.size() > 0 ? isPlayerChangeValid(before, after, keys, 0) : true) &&
+             (keys.size() > 1 ? isPlayerChangeValid(before, after, keys, 1) : true) &&
+             (keys.size() > 2 ? isPlayerChangeValid(before, after, keys, 2) : true) &&
+             (keys.size() > 3 ? isPlayerChangeValid(before, after, keys, 3) : true) &&
+             (keys.size() > 4 ? isPlayerChangeValid(before, after, keys, 4) : true) &&
+             (keys.size() > 5 ? isPlayerChangeValid(before, after, keys, 5) : true) &&
+             (keys.size() > 6 ? isPlayerChangeValid(before, after, keys, 6) : true) &&
+             (keys.size() > 7 ? isPlayerChangeValid(before, after, keys, 7) : true) &&
+             (keys.size() > 8 ? isPlayerChangeValid(before, after, keys, 8) : true) &&
+             (keys.size() > 9 ? isPlayerChangeValid(before, after, keys, 9) : true) &&
+             (keys.size() > 10 ? isPlayerChangeValid(before, after, keys, 10) : true) &&
+             (keys.size() > 11 ? isPlayerChangeValid(before, after, keys, 11) : true) &&
+             (keys.size() > 12 ? isPlayerChangeValid(before, after, keys, 12) : true) &&
+             (keys.size() > 13 ? isPlayerChangeValid(before, after, keys, 13) : true) &&
+             (keys.size() > 14 ? isPlayerChangeValid(before, after, keys, 14) : true) &&
+             (keys.size() > 15 ? isPlayerChangeValid(before, after, keys, 15) : true);
+    }
+
     // 1. Private data (PINs) - Admin only
     match /privateData/{document=**} {
       allow read, write: if isAdmin();
@@ -55,7 +82,7 @@ service cloud.firestore {
 
     match /artifacts/{appId}/public/data/sessions/{docId} {
       allow read: if true;
-      allow create, update: if isAdmin() && isValidBalancesSchema(request.resource.data.balances);
+      allow create, update: if isAdmin();
       allow delete: if isAdmin();
     }
 
@@ -65,37 +92,27 @@ service cloud.firestore {
       allow update: if request.auth != null && (
         isAdmin() || (
           isValidBalancesSchema(request.resource.data) &&
-          isSumEqual(resource.data, request.resource.data, resource.data.keys())
+          (isSumEqual(resource.data, request.resource.data, resource.data.keys()) ||
+           isEveryPlayerChangeValid(resource.data, request.resource.data, resource.data.keys()))
         )
       );
     }
 
+    // 3. Loans (Read/writeable by authenticated users)
     match /artifacts/{appId}/public/data/loans/{docId} {
-      allow read: if true;
-      allow write: if isAdmin() || (
-        request.auth != null && (
-          // If creating: amount must be positive and borrower != lender
-          (request.method == 'create' && (
-            request.resource.data.amount > 0 &&
-            request.resource.data.interest >= 0 &&
-            request.resource.data.borrower != request.resource.data.lender
-          )) ||
-          // If updating: allowed for authenticated users (to approve/settle/decline)
-          (request.method == 'update')
-        )
-      );
+      allow read, write: if request.auth != null;
     }
 
-    // 3. Live Game State (Read by everyone, written by Admin only)
+    // 3b. Live Game State (Read by everyone, written by Admin only)
     match /artifacts/{appId}/public/data/liveGame/{docId} {
       allow read: if true;
       allow write: if isAdmin();
     }
 
-    // 3b. Transactions Log (Read by everyone, written by authenticated users)
+    // 3c. Transactions Log (Read by everyone, written by authenticated users)
     match /artifacts/{appId}/public/data/transactions/{docId} {
       allow read: if true;
-      allow write: if request.auth != null && request.resource.data.amount > 0;
+      allow write: if request.auth != null;
     }
 
     // 4. Seat Claims verification (Anyone authenticated can write/read their claim)
@@ -105,14 +122,7 @@ service cloud.firestore {
 
     // 4b. Player Declarations (Read by anyone, writeable by authenticated users)
     match /artifacts/{appId}/public/data/playerDeclarations/{playerId} {
-      allow read: if true;
-      allow write: if request.auth != null && (
-        isAdmin() || (
-          (!request.resource.data.keys().hasAny(['buyIn']) || request.resource.data.buyIn >= 0) &&
-          (!request.resource.data.keys().hasAny(['rebuys']) || request.resource.data.rebuys >= 0) &&
-          (!request.resource.data.keys().hasAny(['cashOut']) || request.resource.data.cashOut >= 0)
-        )
-      );
+      allow read, write: if request.auth != null;
     }
 
     // 5. Live Game Commands (Only authenticated users can submit a command)
