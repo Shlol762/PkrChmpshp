@@ -67,25 +67,44 @@ export function calculatePaydays(dayNumber, config, rawBalances, loans) {
   return paydays;
 }
 
-export function calculatePlayerStats(sessions, loans, currentDay, config, balances = {}) {
-  const completedSessions = sessions.filter(s => s.status !== 'active');
-  const latestSession = completedSessions.length > 0 ? completedSessions[0] : null;
+export function calculatePlayerStats(sessions, loans, currentDay, config, balances = {}, targetRound = null) {
+  const activeRound = (config && config.currentRound === 2) || currentDay > 30 ? 2 : 1;
+  const round = targetRound || activeRound;
+  const isRound2 = round === 2;
 
-  const isRound2 = (config && config.currentRound === 2) || currentDay > 30;
+  // Filter completed sessions for this round
+  const completedSessions = sessions.filter(s => {
+    if (s.status === 'active') return false;
+    const sDay = Number(s.dayNumber);
+    return isRound2 ? sDay > 30 : sDay <= 30;
+  });
+
+  // Filter loans for this round
+  const targetLoans = loans.filter(l => {
+    const lDay = Number(l.dayIssued || 0);
+    return isRound2 ? lDay > 30 : lDay <= 30;
+  });
+
+  // Determine which balances to use: live for active round, snapshot for historical round
+  let targetBalances = balances;
+  if (round !== activeRound) {
+    const latestTargetSession = completedSessions.reduce((latest, s) => {
+      if (!latest || Number(s.dayNumber) > Number(latest.dayNumber)) {
+        return s;
+      }
+      return latest;
+    }, null);
+    targetBalances = latestTargetSession?.balances || {};
+  }
 
   const totalPaydays = {};
   config.players.forEach(p => { totalPaydays[p.id] = 0; });
 
   completedSessions.forEach(session => {
-    const sDay = Number(session.dayNumber);
-    const sIsRound2 = sDay > 30;
-    // Only sum paydays distributed in the active round
-    if (sIsRound2 === isRound2) {
-      if (session.paydaysDistributed) {
-        for (const [pid, amt] of Object.entries(session.paydaysDistributed)) {
-          if (totalPaydays[pid] !== undefined) {
-            totalPaydays[pid] += Number(amt || 0);
-          }
+    if (session.paydaysDistributed) {
+      for (const [pid, amt] of Object.entries(session.paydaysDistributed)) {
+        if (totalPaydays[pid] !== undefined) {
+          totalPaydays[pid] += Number(amt || 0);
         }
       }
     }
@@ -99,8 +118,8 @@ export function calculatePlayerStats(sessions, loans, currentDay, config, balanc
     let bank = startBalance;
     let wallet = 0;
     let currentTableBalance = startBalance;
-    if (balances[player.id] !== undefined && balances[player.id] !== null) {
-      const pBal = balances[player.id];
+    if (targetBalances[player.id] !== undefined && targetBalances[player.id] !== null) {
+      const pBal = targetBalances[player.id];
       if (typeof pBal === 'object') {
         bank = Number(pBal.bank || 0);
         wallet = Number(pBal.wallet || 0);
@@ -116,7 +135,7 @@ export function calculatePlayerStats(sessions, loans, currentDay, config, balanc
     let borrowedPrincipal = 0;
     let borrowedInterest  = 0;
 
-    loans.forEach(loan => {
+    targetLoans.forEach(loan => {
       if (loan.status !== 'active' && loan.status !== 'pending_settlement') return;
       const principal = Number(loan.amount);
       const interest = repaymentAmount(loan) - principal;
@@ -131,7 +150,6 @@ export function calculatePlayerStats(sessions, loans, currentDay, config, balanc
     });
 
     const expectedBreakEven = startBalance + totalPaydays[player.id];
-    // Adjust the live balance to exclude active loan principal from P/L
     const tablePL = (currentTableBalance - borrowedPrincipal + lentOutPrincipal) - expectedBreakEven;
 
     const netWorth = currentTableBalance + (lentOutPrincipal + lentOutInterest) - (borrowedPrincipal + borrowedInterest);

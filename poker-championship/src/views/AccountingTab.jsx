@@ -34,6 +34,39 @@ export default function AccountingTab({
 }) {
   const [subTab, setSubTab] = useState('sessions'); // 'sessions' or 'transactions'
 
+  const maxDayNumber = useMemo(() => {
+    if (sessions.length === 0) return 0;
+    return Math.max(...sessions.map(s => Number(s.dayNumber)));
+  }, [sessions]);
+  const activeRound = (config && config.currentRound === 2) || maxDayNumber > 30 ? 2 : 1;
+  const [selectedRound, setSelectedRound] = useState(activeRound);
+
+  const filteredSessionsByRound = useMemo(() => {
+    return sessions.filter(s => {
+      const sDay = Number(s.dayNumber);
+      return selectedRound === 2 ? sDay > 30 : sDay <= 30;
+    });
+  }, [sessions, selectedRound]);
+
+  const filteredTransactionsByRound = useMemo(() => {
+    const round2ResetTx = transactions.find(tx => tx.type === 'BALANCE_RESET' && tx.note?.includes('Round 2'));
+    const resetTime = round2ResetTx ? new Date(round2ResetTx.recordedAt).getTime() : null;
+
+    return transactions.filter(tx => {
+      const txDay = Number(tx.sessionDay || 0);
+      if (txDay > 30) return selectedRound === 2;
+      if (txDay > 0) return selectedRound === 1;
+      
+      // For txDay === 0:
+      if (resetTime) {
+        const txTime = new Date(tx.recordedAt).getTime();
+        const isAfterReset = txTime >= resetTime;
+        return selectedRound === 2 ? isAfterReset : !isAfterReset;
+      }
+      return selectedRound === 1;
+    });
+  }, [transactions, selectedRound]);
+
   // Filter states
   const [selectedPlayers, setSelectedPlayers] = useState([]);
   const [selectedTypes, setSelectedTypes] = useState([]);
@@ -66,7 +99,7 @@ export default function AccountingTab({
 
   // Filter transactions
   const filteredTransactions = useMemo(() => {
-    let list = [...transactions];
+    let list = [...filteredTransactionsByRound];
 
     // Filter by player
     if (selectedPlayers.length > 0) {
@@ -90,7 +123,7 @@ export default function AccountingTab({
     }
 
     return list;
-  }, [transactions, selectedPlayers, selectedTypes, minDay, maxDay]);
+  }, [filteredTransactionsByRound, selectedPlayers, selectedTypes, minDay, maxDay]);
 
   // Compute running balance/net-worth if EXACTLY ONE player is selected
   const singlePlayerRunningBalances = useMemo(() => {
@@ -98,7 +131,7 @@ export default function AccountingTab({
     const pid = selectedPlayers[0];
 
     // Sort transactions oldest first to calculate running balance
-    const sortedChronological = [...transactions]
+    const sortedChronological = [...filteredTransactionsByRound]
       .filter(tx => 
         (tx.from?.playerId === pid) ||
         (tx.to?.playerId === pid)
@@ -119,7 +152,7 @@ export default function AccountingTab({
     });
 
     return balanceMap;
-  }, [transactions, selectedPlayers]);
+  }, [filteredTransactionsByRound, selectedPlayers]);
 
   // Reset all filters
   const resetFilters = () => {
@@ -161,6 +194,32 @@ export default function AccountingTab({
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
       
+      {/* Round Tabs Switcher (only shown if activeRound is 2) */}
+      {activeRound === 2 && (
+        <div className="flex bg-zinc-950/80 p-1 rounded-xl border border-white/5 w-fit shadow-lg backdrop-blur-md">
+          <button
+            onClick={() => setSelectedRound(1)}
+            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              selectedRound === 1 
+                ? 'bg-zinc-800 text-white shadow-sm' 
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            Round 1
+          </button>
+          <button
+            onClick={() => setSelectedRound(2)}
+            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              selectedRound === 2 
+                ? 'bg-amber-500 text-amber-950 shadow-md' 
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            Round 2
+          </button>
+        </div>
+      )}
+
       {/* Sub-tab Pill Navigation */}
       <div className="flex justify-between items-center border-b border-white/5 pb-4">
         <div className="flex bg-zinc-950 p-1 rounded-xl border border-white/5">
@@ -188,7 +247,7 @@ export default function AccountingTab({
           </button>
         </div>
 
-        {subTab === 'sessions' && (
+        {subTab === 'sessions' && selectedRound === activeRound && (
           <div className="flex gap-2">
             {!activeSession && (
               <button
@@ -254,7 +313,7 @@ export default function AccountingTab({
           </div>
 
           {(() => {
-            const completedSessions = sessions.filter(s => s.status !== 'active');
+            const completedSessions = filteredSessionsByRound.filter(s => s.status !== 'active');
             if (completedSessions.length === 0) {
               return (
                 <div className="text-center py-20 bg-zinc-900/30 border border-white/5 rounded-3xl border-dashed flex flex-col items-center">
@@ -276,14 +335,18 @@ export default function AccountingTab({
                     const currentBal = session.balances?.[p.id];
                     const prevBal = prevSession?.balances?.[p.id];
 
+                    const roundStartBal = selectedRound === 2 
+                      ? Number(p.r2StartBalance !== undefined ? p.r2StartBalance : 5000) 
+                      : Number(p.startBalance || 0);
+
                     // Safely extract bank + wallet totals
                     const currentTotal = typeof currentBal === 'object' 
                       ? Number(currentBal.bank || 0) + Number(currentBal.wallet || 0)
-                      : Number((currentBal ?? p.startBalance) || 0);
+                      : Number((currentBal ?? roundStartBal) || 0);
 
                     const prevTotal = typeof prevBal === 'object'
                       ? Number(prevBal.bank || 0) + Number(prevBal.wallet || 0)
-                      : Number((prevBal ?? p.startBalance) || 0);
+                      : Number((prevBal ?? roundStartBal) || 0);
 
                     const paydayIncrease = session.paydaysDistributed?.[p.id] || 0;
                     const truePokerDiff = currentTotal - prevTotal - paydayIncrease;
@@ -315,7 +378,7 @@ export default function AccountingTab({
                           </div>
                           <h3 className="text-xl font-bold text-white">Day {session.dayNumber}</h3>
                         </div>
-                        {index === 0 && isAuthenticated && (
+                        {index === 0 && isAuthenticated && selectedRound === activeRound && (
                           <div className="flex gap-1">
                             <button
                               onClick={() => openSessionModal(session)}

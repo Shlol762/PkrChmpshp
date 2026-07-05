@@ -1,3 +1,4 @@
+import { useState, useMemo } from 'react';
 import { HandCoins, Plus, ArrowRightLeft, AlertCircle } from 'lucide-react';
 import { repaymentAmount } from '../utils/pokerEngine';
 
@@ -11,14 +12,51 @@ export default function LoansTab({
   getPlayerName,
   isSubmitting = false
 }) {
+  const activeRound = currentDay > 30 ? 2 : 1;
+  const [selectedRound, setSelectedRound] = useState(activeRound);
+
+  const filteredLoans = useMemo(() => {
+    return loans.filter(loan => {
+      const lDay = Number(loan.dayIssued || 0);
+      return selectedRound === 2 ? lDay > 30 : lDay <= 30;
+    });
+  }, [loans, selectedRound]);
+
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
+      
+      {/* Round Tabs Switcher (only shown if activeRound is 2) */}
+      {activeRound === 2 && (
+        <div className="flex bg-zinc-950/80 p-1 rounded-xl border border-white/5 w-fit shadow-lg backdrop-blur-md">
+          <button
+            onClick={() => setSelectedRound(1)}
+            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              selectedRound === 1 
+                ? 'bg-zinc-800 text-white shadow-sm' 
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            Round 1
+          </button>
+          <button
+            onClick={() => setSelectedRound(2)}
+            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              selectedRound === 2 
+                ? 'bg-amber-500 text-amber-950 shadow-md' 
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            Round 2
+          </button>
+        </div>
+      )}
+
       <div className="flex justify-between items-end gap-4">
         <div>
           <h2 className="text-xl font-bold text-white">Loan Ledger</h2>
           <p className="text-sm text-zinc-500">Track player-to-player debts.</p>
         </div>
-        {isAuthenticated && (
+        {isAuthenticated && selectedRound === activeRound && (
           <button
             onClick={openLoanModal}
             className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold py-2.5 px-5 rounded-xl transition-all shadow-[0_0_20px_rgba(245,158,11,0.2)]"
@@ -30,14 +68,14 @@ export default function LoansTab({
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {loans.length === 0 && (
+        {filteredLoans.length === 0 && (
            <div className="col-span-full text-center py-20 bg-zinc-900/30 border border-white/5 rounded-3xl border-dashed">
             <HandCoins className="h-12 w-12 text-zinc-700 mx-auto mb-4" />
             <h3 className="text-lg font-medium text-zinc-300">No active loans</h3>
             <p className="text-zinc-500 text-sm mt-1">Player debts will appear here.</p>
           </div>
         )}
-        {loans.map(loan => {
+        {filteredLoans.map(loan => {
           const isOverdue = currentDay > Number(loan.deadlineDay) && loan.status === 'active';
           const repay = repaymentAmount(loan);
 

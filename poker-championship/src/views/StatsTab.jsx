@@ -142,6 +142,13 @@ const getSparklinePath = (history) => {
 };
 
 export default function StatsTab({ config, sessions, loans, playerCurrentStats = [] }) {
+  const maxDayNumber = useMemo(() => {
+    if (sessions.length === 0) return 0;
+    return Math.max(...sessions.map(s => Number(s.dayNumber)));
+  }, [sessions]);
+  const activeRound = (config && config.currentRound === 2) || maxDayNumber > 30 ? 2 : 1;
+  const [selectedTab, setSelectedTab] = useState(() => (activeRound === 2 ? 'r2' : 'r1'));
+
   // Sorting state for the data table
   const [sortField, setSortField] = useState('netProfit');
   const [sortDirection, setSortDirection] = useState('desc');
@@ -158,29 +165,54 @@ export default function StatsTab({ config, sessions, loans, playerCurrentStats =
   // Wealth distribution state
   const [hoveredBar, setHoveredBar] = useState(null);
 
+  // Sync sorting with tab selection
+  useEffect(() => {
+    if (selectedTab === 'global') {
+      setSortField('globalRank');
+      setSortDirection('desc');
+    } else {
+      setSortField('netProfit');
+      setSortDirection('desc');
+    }
+  }, [selectedTab]);
+
   // 1. Process Completed Sessions
   const completedSessions = useMemo(() => {
     return sessions
-      .filter(s => s.status !== 'active')
+      .filter(s => {
+        if (s.status === 'active') return false;
+        const sDay = Number(s.dayNumber);
+        if (selectedTab === 'r1') return sDay <= 30;
+        if (selectedTab === 'r2') return sDay > 30;
+        return true; // 'global'
+      })
       .sort((a, b) => Number(a.dayNumber) - Number(b.dayNumber));
-  }, [sessions]);
+  }, [sessions, selectedTab]);
 
   // List of all completed day numbers
   const allDays = useMemo(() => {
-    return [0, ...completedSessions.map(s => Number(s.dayNumber))];
-  }, [completedSessions]);
+    const startDay = selectedTab === 'r2' ? 30 : 0;
+    return [startDay, ...completedSessions.map(s => Number(s.dayNumber))];
+  }, [completedSessions, selectedTab]);
 
   // Economy & Inflation stats
   const economyStats = useMemo(() => {
-    // 1. Calculate Day 0 Money Supply
-    const startSupply = config.players.reduce((sum, p) => sum + Number(p.startBalance || 0), 0);
+    const isR2 = selectedTab === 'r2';
+    // 1. Calculate Day 0 Money Supply based on the selected tab
+    const startSupply = config.players.reduce((sum, p) => {
+      const sb = isR2 
+        ? Number(p.r2StartBalance !== undefined ? p.r2StartBalance : 5000) 
+        : Number(p.startBalance || 0);
+      return sum + sb;
+    }, 0);
     if (startSupply === 0) return null;
 
     const history = [];
 
-    // Day 0
+    // Day 0 or Day 30 baseline
+    const baselineDay = isR2 ? 30 : 0;
     history.push({
-      dayNumber: 0,
+      dayNumber: baselineDay,
       moneySupply: startSupply,
       inflationRate: 1.0,
       paydaysDistributed: 0,
@@ -204,7 +236,9 @@ export default function StatsTab({ config, sessions, loans, playerCurrentStats =
             bal = Number(balVal);
           }
         } else {
-          bal = Number(p.startBalance || 0);
+          bal = isR2
+            ? Number(p.r2StartBalance !== undefined ? p.r2StartBalance : 5000)
+            : Number(p.startBalance || 0);
         }
         daySupply += bal;
       });
@@ -236,15 +270,15 @@ export default function StatsTab({ config, sessions, loans, playerCurrentStats =
       totalPaydays: latest ? latest.cumulativePaydays : 0,
       history,
     };
-  }, [config.players, completedSessions]);
+  }, [config.players, completedSessions, selectedTab]);
 
   // Economy chart setup
   const ecoWidth = 800;
   const ecoHeight = 200;
   const ecoMargin = { top: 20, right: 30, bottom: 45, left: 60 };
 
-  const ecoXMin = 0;
-  const ecoXMax = Math.max(...allDays, 1);
+  const ecoXMin = selectedTab === 'r2' ? 30 : 0;
+  const ecoXMax = Math.max(...allDays, ecoXMin + 1);
 
   const ecoValues = useMemo(() => {
     return economyStats ? economyStats.history.map(h => h.moneySupply) : [0];
@@ -352,7 +386,7 @@ export default function StatsTab({ config, sessions, loans, playerCurrentStats =
         currentLossStreak: 0,
         maxWinStreak: 0,
         maxLossStreak: 0,
-        history: [{ dayNumber: 0, profit: 0 }],
+        history: [{ dayNumber: selectedTab === 'r2' ? 30 : 0, profit: 0 }],
         loansBorrowedOnPlayDays: 0
       };
     });
@@ -408,7 +442,14 @@ export default function StatsTab({ config, sessions, loans, playerCurrentStats =
         const expectedBreakEvenD = startBalanceD + paydaysUpToDay;
         const cumulativeProfitD = (currentBal - borrowedPrincipalD + lentOutPrincipalD) - expectedBreakEvenD;
 
-        const prevProfit = playerStats.history[playerStats.history.length - 1].profit;
+        // Check if there is a previous session from the same round
+        const prevSession = completedSessions.find(session => Number(session.dayNumber) < day);
+        const prevSessionIsRound2 = prevSession && Number(prevSession.dayNumber) > 30;
+
+        let prevProfit = 0;
+        if (prevSession && (sIsRound2 === prevSessionIsRound2)) {
+          prevProfit = playerStats.history[playerStats.history.length - 1].profit;
+        }
         const net = cumulativeProfitD - prevProfit;
 
         let played = false;
@@ -577,6 +618,22 @@ export default function StatsTab({ config, sessions, loans, playerCurrentStats =
   // Sorted list of players
   const sortedPlayers = useMemo(() => {
     return [...playerStats].sort((a, b) => {
+      if (selectedTab === 'global' && (sortField === 'globalRank' || sortField === 'netProfit')) {
+        const multiplier = sortDirection === 'asc' ? 1 : -1;
+        
+        const aRoi = a.roi === null ? -Infinity : a.roi;
+        const bRoi = b.roi === null ? -Infinity : b.roi;
+        if (bRoi !== aRoi) return (bRoi - aRoi) * -multiplier;
+
+        if (b.winRate !== a.winRate) return (b.winRate - a.winRate) * -multiplier;
+
+        if (b.avgProfit !== a.avgProfit) return (b.avgProfit - a.avgProfit) * -multiplier;
+
+        const aDep = a.loanDependency === null ? Infinity : a.loanDependency;
+        const bDep = b.loanDependency === null ? Infinity : b.loanDependency;
+        return (aDep - bDep) * multiplier;
+      }
+
       let valA = a[sortField];
       let valB = b[sortField];
 
@@ -592,15 +649,15 @@ export default function StatsTab({ config, sessions, loans, playerCurrentStats =
       }
       return sortDirection === 'asc' ? valA - valB : valB - valA;
     });
-  }, [playerStats, sortField, sortDirection]);
+  }, [playerStats, sortField, sortDirection, selectedTab]);
 
   // ── Chart Dimensions & SVG Scaling ───────────────────────────────────────────
   const chartWidth = 800;
   const chartHeight = 350;
   const margin = { top: 20, right: 30, bottom: 45, left: 60 };
 
-  const minDay = 0;
-  const maxDay = Math.max(...allDays, 1);
+  const minDay = selectedTab === 'r2' ? 30 : 0;
+  const maxDay = Math.max(...allDays, minDay + 1);
 
   // Find overall min/max profits for Y axis
   const { yMin, yMax } = useMemo(() => {
@@ -680,7 +737,11 @@ export default function StatsTab({ config, sessions, loans, playerCurrentStats =
       .sort((a, b) => b.profit - a.profit);
   }, [hoveredDay, playerStats, visiblePlayers]);
 
-  if (completedSessions.length === 0) {
+  const allCompletedSessions = useMemo(() => {
+    return sessions.filter(s => s.status !== 'active');
+  }, [sessions]);
+
+  if (allCompletedSessions.length === 0) {
     return (
       <div className="text-center py-20 bg-zinc-900/30 border border-white/5 rounded-3xl border-dashed">
         <TrendingUp className="h-12 w-12 text-zinc-700 mx-auto mb-4" />
@@ -693,6 +754,42 @@ export default function StatsTab({ config, sessions, loans, playerCurrentStats =
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       
+      {/* Round Tabs Switcher (only shown if activeRound is 2) */}
+      {activeRound === 2 && (
+        <div className="flex bg-zinc-950/80 p-1 rounded-xl border border-white/5 w-fit shadow-lg backdrop-blur-md">
+          <button
+            onClick={() => setSelectedTab('r1')}
+            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              selectedTab === 'r1' 
+                ? 'bg-zinc-800 text-white shadow-sm' 
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            Round 1
+          </button>
+          <button
+            onClick={() => setSelectedTab('r2')}
+            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              selectedTab === 'r2' 
+                ? 'bg-amber-500 text-amber-950 shadow-md' 
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            Round 2
+          </button>
+          <button
+            onClick={() => setSelectedTab('global')}
+            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              selectedTab === 'global' 
+                ? 'bg-violet-600 text-white shadow-md' 
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            Global
+          </button>
+        </div>
+      )}
+
       {/* Title */}
       <div>
         <h2 className="text-xl font-bold text-white flex items-center gap-2">
@@ -701,9 +798,18 @@ export default function StatsTab({ config, sessions, loans, playerCurrentStats =
         <p className="text-sm text-zinc-500">Comprehensive statistics, profit trends, and session performance tracking.</p>
       </div>
 
-      {/* ── Main Chart Section ────────────────────────────────────────────────── */}
-      <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-5 sm:p-6 shadow-xl relative">
-        <h3 className="text-sm uppercase font-bold text-zinc-400 tracking-wider mb-4">Bankroll Growth Trendline</h3>
+      {completedSessions.length === 0 ? (
+        <div className="text-center py-20 bg-zinc-900/30 border border-white/5 rounded-3xl border-dashed">
+          <TrendingUp className="h-12 w-12 text-zinc-700 mx-auto mb-4 opacity-40" />
+          <h3 className="text-lg font-medium text-zinc-300">No data for this round yet</h3>
+          <p className="text-zinc-500 text-sm mt-1">Sessions committed in this round will appear here.</p>
+        </div>
+      ) : (
+        <>
+          {/* ── Main Chart Section ────────────────────────────────────────────────── */}
+          {selectedTab !== 'global' && (
+            <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-5 sm:p-6 shadow-xl relative">
+              <h3 className="text-sm uppercase font-bold text-zinc-400 tracking-wider mb-4">Bankroll Growth Trendline</h3>
         
         {/* Tooltip Overlay */}
         {hoveredDay !== null && hoverStats.length > 0 && (
@@ -876,6 +982,7 @@ export default function StatsTab({ config, sessions, loans, playerCurrentStats =
           })}
         </div>
       </div>
+    )}
 
       {/* ── Economy & Inflation Section ───────────────────────────────────────── */}
       {economyStats && (
@@ -1277,32 +1384,36 @@ export default function StatsTab({ config, sessions, loans, playerCurrentStats =
                         {sortField === 'name' && (sortDirection === 'asc' ? <ChevronUp className="w-3.5 h-3.5 ml-auto" /> : <ChevronDown className="w-3.5 h-3.5 ml-auto" />)}
                       </div>
                     </th>
-                    <th className="p-3 text-center min-w-[110px]">
-                      <div className="flex items-center justify-center gap-1">
-                        Trend
-                        <HeaderTooltip 
-                          label="Bankroll Trend" 
-                          desc="Visualizes the player's cumulative bankroll profit growth over time." 
-                          calc="Plots cumulative profit trend across completed sessions"
-                          align="center"
-                        />
-                      </div>
-                    </th>
-                    <th 
-                      onClick={() => handleSort('netProfit')} 
-                      className="p-3 text-right cursor-pointer hover:text-zinc-300 select-none min-w-[90px]"
-                    >
-                      <div className="flex items-center justify-end gap-1">
-                        Net Profit
-                        <HeaderTooltip 
-                          label="Net Profit" 
-                          desc="Total cumulative profit or loss, including poker play and settled loan interest." 
-                          calc="(Balance - BorrowerPrincipal + LenderPrincipal) - ExpectedBreakEven"
-                          align="center"
-                        />
-                        {sortField === 'netProfit' && (sortDirection === 'asc' ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />)}
-                      </div>
-                    </th>
+                    {selectedTab !== 'global' && (
+                      <th className="p-3 text-center min-w-[110px]">
+                        <div className="flex items-center justify-center gap-1">
+                          Trend
+                          <HeaderTooltip 
+                            label="Bankroll Trend" 
+                            desc="Visualizes the player's cumulative bankroll profit growth over time." 
+                            calc="Plots cumulative profit trend across completed sessions"
+                            align="center"
+                          />
+                        </div>
+                      </th>
+                    )}
+                    {selectedTab !== 'global' && (
+                      <th 
+                        onClick={() => handleSort('netProfit')} 
+                        className="p-3 text-right cursor-pointer hover:text-zinc-300 select-none min-w-[90px]"
+                      >
+                        <div className="flex items-center justify-end gap-1">
+                          Net Profit
+                          <HeaderTooltip 
+                            label="Net Profit" 
+                            desc="Total cumulative profit or loss, including poker play and settled loan interest." 
+                            calc="(Balance - BorrowerPrincipal + LenderPrincipal) - ExpectedBreakEven"
+                            align="center"
+                          />
+                          {sortField === 'netProfit' && (sortDirection === 'asc' ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />)}
+                        </div>
+                      </th>
+                    )}
                     <th 
                       onClick={() => handleSort('roi')} 
                       className="p-3 text-right cursor-pointer hover:text-zinc-300 select-none min-w-[70px]"
@@ -1450,42 +1561,46 @@ export default function StatsTab({ config, sessions, loans, playerCurrentStats =
                         </td>
 
                         {/* Trajectory Sparkline */}
-                        <td className="p-3">
-                          <div className="flex justify-center items-center">
-                            {sparkPath ? (
-                              <svg width="100" height="26" className="overflow-visible">
-                                <path
-                                  d={sparkPath}
-                                  fill="none"
-                                  stroke={ps.color}
-                                  strokeWidth="1.5"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                />
-                                {/* End point indicator marker */}
-                                {ps.history.length > 0 && (
-                                  <circle
-                                    cx="100"
-                                    cy={26 - ((ps.netProfit - Math.min(...ps.history.map(h=>h.profit), 0)) / (Math.max(...ps.history.map(h=>h.profit), 100) - Math.min(...ps.history.map(h=>h.profit), 0) || 1)) * 26}
-                                    r="2"
-                                    fill={ps.color}
+                        {selectedTab !== 'global' && (
+                          <td className="p-3">
+                            <div className="flex justify-center items-center">
+                              {sparkPath ? (
+                                <svg width="100" height="26" className="overflow-visible">
+                                  <path
+                                    d={sparkPath}
+                                    fill="none"
+                                    stroke={ps.color}
+                                    strokeWidth="1.5"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
                                   />
-                                )}
-                              </svg>
-                            ) : (
-                              <span className="text-[9px] text-zinc-600 font-bold uppercase font-mono">No Trend</span>
-                            )}
-                          </div>
-                        </td>
+                                  {/* End point indicator marker */}
+                                  {ps.history.length > 0 && (
+                                    <circle
+                                      cx="100"
+                                      cy={26 - ((ps.netProfit - Math.min(...ps.history.map(h=>h.profit), 0)) / (Math.max(...ps.history.map(h=>h.profit), 100) - Math.min(...ps.history.map(h=>h.profit), 0) || 1)) * 26}
+                                      r="2"
+                                      fill={ps.color}
+                                    />
+                                  )}
+                                </svg>
+                              ) : (
+                                <span className="text-[9px] text-zinc-600 font-bold uppercase font-mono">No Trend</span>
+                              )}
+                            </div>
+                          </td>
+                        )}
 
                         {/* Net Profit */}
-                        <td className={`p-3 text-right font-mono font-bold text-xs ${ps.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                          <span className="flex items-center justify-end gap-0.5">
-                            {ps.netProfit >= 0 ? '+' : ''}
-                            {ps.netProfit.toLocaleString()}
-                            {ps.netProfit >= 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
-                          </span>
-                        </td>
+                        {selectedTab !== 'global' && (
+                          <td className={`p-3 text-right font-mono font-bold text-xs ${ps.netProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            <span className="flex items-center justify-end gap-0.5">
+                              {ps.netProfit >= 0 ? '+' : ''}
+                              {ps.netProfit.toLocaleString()}
+                              {ps.netProfit >= 0 ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+                            </span>
+                          </td>
+                        )}
 
                         {/* ROI */}
                         <td className={`p-3 text-right font-mono font-bold ${ps.roi !== null ? (ps.roi >= 0 ? 'text-emerald-400/80' : 'text-rose-400/80') : 'text-zinc-600'}`}>
@@ -1547,6 +1662,8 @@ export default function StatsTab({ config, sessions, loans, playerCurrentStats =
           </div>
         </div>
       </div>
+    </>
+    )}
     </div>
   );
 }

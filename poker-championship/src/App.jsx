@@ -780,6 +780,8 @@ export default function App() {
                 loans={loans}
                 activeSession={activeSession}
                 playerDeclarations={playerDeclarations}
+                sessions={sessions}
+                balances={balances}
               />
             )}
 

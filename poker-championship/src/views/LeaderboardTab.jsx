@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Landmark, Wallet, Banknote, Clock, TrendingUp, TrendingDown, HandCoins, Target, ArrowRight, ArrowLeft, Minus, CalendarDays } from 'lucide-react';
 
@@ -12,6 +12,8 @@ const getRoundDayString = (day) => {
   }
 };
 
+import { calculatePlayerStats } from '../utils/pokerEngine';
+
 export default function LeaderboardTab({
   actualSystemNetWorth,
   config,
@@ -19,20 +21,57 @@ export default function LeaderboardTab({
   totalPaydays,
   currentDay,
   nextPaydayIn,
-  playerStats,
+  playerStats: initialPlayerStats,
   loans = [],
   activeSession = null,
-  playerDeclarations = {}
+  playerDeclarations = {},
+  sessions = [],
+  balances = {}
 }) {
+  const activeRound = (config && config.currentRound === 2) || currentDay > 30 ? 2 : 1;
+  const [selectedRound, setSelectedRound] = useState(activeRound);
+
+  const currentRoundStats = useMemo(() => {
+    return calculatePlayerStats(sessions, loans, currentDay, config, balances, selectedRound);
+  }, [sessions, loans, currentDay, config, balances, selectedRound]);
+
   const [expandedCards, setExpandedCards] = useState(() => {
-    return new Set(playerStats?.length > 0 ? [playerStats[0].id] : []);
+    return new Set(currentRoundStats?.length > 0 ? [currentRoundStats[0].id] : []);
   });
 
   const [isInflationAdjusted, setIsInflationAdjusted] = useState(false);
 
-  const startSupply = config?.players?.reduce((sum, p) => sum + Number(p.startBalance || 0), 0) || 0;
-  const currentSupply = playerStats?.reduce((sum, p) => sum + Number(p.currentTableBalance || 0), 0) || 0;
-  const inflationRate = startSupply > 0 ? (currentSupply / startSupply) : 1.0;
+  const roundStartSupply = useMemo(() => {
+    return config?.players?.reduce((sum, p) => {
+      const sb = selectedRound === 2 
+        ? Number(p.r2StartBalance !== undefined ? p.r2StartBalance : 5000) 
+        : Number(p.startBalance || 0);
+      return sum + sb;
+    }, 0) || 0;
+  }, [config, selectedRound]);
+
+  const currentSupply = useMemo(() => {
+    return currentRoundStats?.reduce((sum, p) => sum + Number(p.currentTableBalance || 0), 0) || 0;
+  }, [currentRoundStats]);
+
+  const inflationRate = roundStartSupply > 0 ? (currentSupply / roundStartSupply) : 1.0;
+
+  const roundSystemNetWorth = useMemo(() => {
+    return currentRoundStats.reduce((sum, p) => sum + p.netWorth, 0);
+  }, [currentRoundStats]);
+
+  const roundTotalPaydays = useMemo(() => {
+    let count = 0;
+    sessions.forEach(s => {
+      const sDay = Number(s.dayNumber);
+      const sIsRound2 = sDay > 30;
+      const isTargetRound = selectedRound === 2 ? sIsRound2 : !sIsRound2;
+      if (isTargetRound && s.paydaysDistributed && Object.keys(s.paydaysDistributed).length > 0) {
+        count++;
+      }
+    });
+    return count;
+  }, [sessions, selectedRound]);
 
   const toggleCard = (id) => {
     setExpandedCards(prev => {
@@ -43,9 +82,49 @@ export default function LeaderboardTab({
     });
   };
 
+  const displayDayString = useMemo(() => {
+    if (selectedRound === activeRound) {
+      return getRoundDayString(currentDay);
+    } else {
+      const roundSessions = sessions.filter(s => {
+        const sDay = Number(s.dayNumber);
+        return selectedRound === 2 ? sDay > 30 : sDay <= 30;
+      });
+      if (roundSessions.length === 0) return selectedRound === 2 ? 'R2D0' : 'R1D0';
+      const maxDay = Math.max(...roundSessions.map(s => Number(s.dayNumber)));
+      return getRoundDayString(maxDay) + ' (Completed)';
+    }
+  }, [selectedRound, activeRound, currentDay, sessions]);
+
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       
+      {/* Round Tabs Switcher (only shown if activeRound is 2) */}
+      {activeRound === 2 && (
+        <div className="flex bg-zinc-950/80 p-1 rounded-xl border border-white/5 w-fit shadow-lg backdrop-blur-md">
+          <button
+            onClick={() => setSelectedRound(1)}
+            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              selectedRound === 1 
+                ? 'bg-zinc-800 text-white shadow-sm' 
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            Round 1
+          </button>
+          <button
+            onClick={() => setSelectedRound(2)}
+            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              selectedRound === 2 
+                ? 'bg-amber-500 text-amber-950 shadow-md' 
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            Round 2
+          </button>
+        </div>
+      )}
+
       {/* HUD Pill Stats */}
       <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-4">
         
@@ -57,24 +136,26 @@ export default function LeaderboardTab({
           </span>
           <div className="flex items-baseline gap-1 truncate">
             <span className="text-sm sm:text-base font-bold text-white tabular-nums drop-shadow-md truncate">
-              {Math.round(isInflationAdjusted ? actualSystemNetWorth / inflationRate : actualSystemNetWorth).toLocaleString()}
+              {Math.round(isInflationAdjusted ? roundSystemNetWorth / inflationRate : roundSystemNetWorth).toLocaleString()}
             </span>
           </div>
         </div>
 
-        {/* Next Payday Pill */}
-        <div className="flex items-center gap-2 min-w-0 group bg-zinc-900/60 border border-white/5 rounded-full px-3 py-1.5 sm:px-4 sm:py-2 shadow-sm backdrop-blur-sm truncate">
-          <Clock className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 text-purple-400 drop-shadow-[0_0_8px_rgba(192,132,252,0.5)]" />
-          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest group-hover:text-zinc-400 transition-colors hidden sm:inline-block shrink-0">Next Payday</span>
-          <div className="flex items-baseline gap-1 truncate">
-            <span className="text-sm sm:text-base font-bold text-white drop-shadow-md truncate">
-              {`+${Math.round(isInflationAdjusted ? (config.paydayMax || 0) / inflationRate : (config.paydayMax || 0)).toLocaleString()} max ➔ End of ${getRoundDayString(currentDay + nextPaydayIn - 1)}`}
-            </span>
-            <span className="text-[10px] sm:text-xs font-medium text-zinc-600 ml-0.5 shrink-0">
-              ({totalPaydays}x)
-            </span>
+        {/* Next Payday Pill (only shown if selectedRound is activeRound) */}
+        {selectedRound === activeRound && (
+          <div className="flex items-center gap-2 min-w-0 group bg-zinc-900/60 border border-white/5 rounded-full px-3 py-1.5 sm:px-4 sm:py-2 shadow-sm backdrop-blur-sm truncate">
+            <Clock className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0 text-purple-400 drop-shadow-[0_0_8px_rgba(192,132,252,0.5)]" />
+            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest group-hover:text-zinc-400 transition-colors hidden sm:inline-block shrink-0">Next Payday</span>
+            <div className="flex items-baseline gap-1 truncate">
+              <span className="text-sm sm:text-base font-bold text-white drop-shadow-md truncate">
+                {`+${Math.round(isInflationAdjusted ? (config.paydayMax || 0) / inflationRate : (config.paydayMax || 0)).toLocaleString()} max ➔ End of ${getRoundDayString(currentDay + nextPaydayIn - 1)}`}
+              </span>
+              <span className="text-[10px] sm:text-xs font-medium text-zinc-600 ml-0.5 shrink-0">
+                ({roundTotalPaydays}x)
+              </span>
+            </div>
           </div>
-        </div>
+        )}
 
       </div>
 
@@ -84,7 +165,7 @@ export default function LeaderboardTab({
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-semibold text-white">Leaderboard</h2>
             <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[10px] px-2.5 py-0.5 rounded-full font-bold font-mono">
-              {getRoundDayString(currentDay)}
+              {displayDayString}
             </span>
             <div className="flex items-center bg-zinc-950 border border-white/5 rounded-full p-0.5 text-[9px] font-bold">
               <button
@@ -117,7 +198,7 @@ export default function LeaderboardTab({
         <div className="space-y-2">
           {(() => {
             let currentDisplayRank = 1;
-            return playerStats.map((stat, index) => {
+            return currentRoundStats.map((stat, index) => {
               const displayNetWorth = isInflationAdjusted ? Math.round(stat.netWorth / inflationRate) : stat.netWorth;
               const displayTableBalance = isInflationAdjusted ? Math.round(stat.currentTableBalance / inflationRate) : stat.currentTableBalance;
               const displayBank = isInflationAdjusted ? Math.round((stat.bank || 0) / inflationRate) : (stat.bank || 0);
@@ -130,7 +211,7 @@ export default function LeaderboardTab({
               const displaySalary = isInflationAdjusted ? Math.round(Number(stat.salary || 0) / inflationRate) : Number(stat.salary || 0);
 
               if (index > 0) {
-                const prevStat = playerStats[index - 1];
+                const prevStat = currentRoundStats[index - 1];
                 const prevBaseline = Number(prevStat.startBalance || 0) + (prevStat.salary || 0);
                 const currBaseline = Number(stat.startBalance || 0) + (stat.salary || 0);
                 
