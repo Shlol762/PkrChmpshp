@@ -26,3 +26,6 @@ dist-ssr
 *.sln
 *.sw?
 serviceAccountKey.json
+
+# Backups
+backups/

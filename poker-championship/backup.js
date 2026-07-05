@@ -128,7 +128,13 @@ async function runBackupPipeline() {
     'poker_declarations'
   );
 
-  // 4. Export centralized spreadsheet ledger balance metrics doc
+  // 4. Export transaction logs
+  await exportCollectionToCSV(
+    `artifacts/${safeAppId}/public/data/transactions`, 
+    'poker_transactions'
+  );
+
+  // 5. Export centralized spreadsheet ledger balance metrics doc
   try {
     const balanceDoc = await db.doc(`artifacts/${safeAppId}/public/data/balances/main`).get();
     if (balanceDoc.exists) {
