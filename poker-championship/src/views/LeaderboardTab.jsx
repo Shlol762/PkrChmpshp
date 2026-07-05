@@ -1,6 +1,16 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Landmark, Wallet, Banknote, Clock, TrendingUp, TrendingDown, HandCoins, Target, ArrowRight, ArrowLeft, Minus } from 'lucide-react';
+import { Landmark, Wallet, Banknote, Clock, TrendingUp, TrendingDown, HandCoins, Target, ArrowRight, ArrowLeft, Minus, CalendarDays } from 'lucide-react';
+
+const getRoundDayString = (day) => {
+  const dayNum = Number(day || 0);
+  if (dayNum === 0) return 'R1D0';
+  if (dayNum <= 30) {
+    return `R1D${dayNum}`;
+  } else {
+    return `R2D${dayNum - 30}`;
+  }
+};
 
 export default function LeaderboardTab({
   actualSystemNetWorth,
@@ -37,7 +47,7 @@ export default function LeaderboardTab({
     <div className="space-y-8 animate-in fade-in duration-500">
       
       {/* HUD Pill Stats */}
-      <div className="flex items-center justify-between gap-2 sm:gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-4">
         
         {/* System NW Pill */}
         <div className="flex items-center gap-2 min-w-0 group bg-zinc-900/60 border border-white/5 rounded-full px-3 py-1.5 sm:px-4 sm:py-2 shadow-sm backdrop-blur-sm truncate">
@@ -58,7 +68,7 @@ export default function LeaderboardTab({
           <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest group-hover:text-zinc-400 transition-colors hidden sm:inline-block shrink-0">Next Payday</span>
           <div className="flex items-baseline gap-1 truncate">
             <span className="text-sm sm:text-base font-bold text-white drop-shadow-md truncate">
-              {`+${Math.round(isInflationAdjusted ? (config.paydayMax || 0) / inflationRate : (config.paydayMax || 0)).toLocaleString()} max ➔ End of Day ${currentDay + nextPaydayIn - 1}`}
+              {`+${Math.round(isInflationAdjusted ? (config.paydayMax || 0) / inflationRate : (config.paydayMax || 0)).toLocaleString()} max ➔ End of ${getRoundDayString(currentDay + nextPaydayIn - 1)}`}
             </span>
             <span className="text-[10px] sm:text-xs font-medium text-zinc-600 ml-0.5 shrink-0">
               ({totalPaydays}x)
@@ -73,6 +83,9 @@ export default function LeaderboardTab({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 px-1">
           <div className="flex items-center gap-3">
             <h2 className="text-lg font-semibold text-white">Leaderboard</h2>
+            <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[10px] px-2.5 py-0.5 rounded-full font-bold font-mono">
+              {getRoundDayString(currentDay)}
+            </span>
             <div className="flex items-center bg-zinc-950 border border-white/5 rounded-full p-0.5 text-[9px] font-bold">
               <button
                 onClick={() => setIsInflationAdjusted(false)}

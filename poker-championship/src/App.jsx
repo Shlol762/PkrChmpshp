@@ -15,7 +15,8 @@ import {
   commitSessionDay,
   recordLoanIssuance,
   recordLoanSettlement,
-  saveBalances as saveBalancesLog
+  saveBalances as saveBalancesLog,
+  globalResetBalancesAndBaselines
 } from './utils/ledgerEngine';
 
 import PinModal from './components/PinModal';
@@ -646,6 +647,16 @@ export default function App() {
     }
   };
 
+  const handleGlobalReset = async (designatedAmount) => {
+    if (!user) return;
+    try {
+      await globalResetBalancesAndBaselines(db, safeAppId, settingsDraft, designatedAmount, user.uid);
+    } catch (err) {
+      console.error("Error performing global reset:", err);
+      alert("Failed to perform global reset: " + err.message);
+    }
+  };
+
   if (loading || !balancesLoaded || !user) {
     return (
       <div className="flex h-screen items-center justify-center bg-[#09090b] text-zinc-200">
@@ -777,6 +788,7 @@ export default function App() {
                 config={config}
                 sessions={sessions}
                 loans={loans}
+                playerCurrentStats={playerStats}
               />
             )}
  
@@ -820,6 +832,7 @@ export default function App() {
                 balancesDraft={balancesDraft}
                 handleBalanceDraftChange={handleBalanceDraftChange}
                 saveBalances={saveBalances}
+                handleGlobalReset={handleGlobalReset}
               />
             )}
  

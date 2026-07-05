@@ -9,8 +9,29 @@ import {
   Info,
   Calendar,
   HelpCircle,
-  Coins
+  Coins,
+  BarChart3
 } from 'lucide-react';
+
+const getRoundDayFullString = (day) => {
+  const dayNum = Number(day || 0);
+  if (dayNum === 0) return 'R1D0';
+  if (dayNum <= 30) {
+    return `R1D${dayNum}(D${dayNum})`;
+  } else {
+    return `R2D${dayNum - 30}(D${dayNum})`;
+  }
+};
+
+const getRoundDayTickString = (day) => {
+  const dayNum = Number(day || 0);
+  if (dayNum === 0) return 'R1D0';
+  if (dayNum <= 30) {
+    return `R1D${dayNum}`;
+  } else {
+    return `R2D${dayNum - 30}`;
+  }
+};
 
 const COLORS = [
   '#3b82f6', // blue
@@ -120,7 +141,7 @@ const getSparklinePath = (history) => {
   return getBezierPath(points, 0.2);
 };
 
-export default function StatsTab({ config, sessions, loans }) {
+export default function StatsTab({ config, sessions, loans, playerCurrentStats = [] }) {
   // Sorting state for the data table
   const [sortField, setSortField] = useState('netProfit');
   const [sortDirection, setSortDirection] = useState('desc');
@@ -133,6 +154,9 @@ export default function StatsTab({ config, sessions, loans }) {
   // Economy chart state
   const [hoveredEcoDay, setHoveredEcoDay] = useState(null);
   const [ecoMousePos, setEcoMousePos] = useState({ x: 0, y: 0 });
+
+  // Wealth distribution state
+  const [hoveredBar, setHoveredBar] = useState(null);
 
   // 1. Process Completed Sessions
   const completedSessions = useMemo(() => {
@@ -217,7 +241,7 @@ export default function StatsTab({ config, sessions, loans }) {
   // Economy chart setup
   const ecoWidth = 800;
   const ecoHeight = 200;
-  const ecoMargin = { top: 20, right: 30, bottom: 30, left: 60 };
+  const ecoMargin = { top: 20, right: 30, bottom: 45, left: 60 };
 
   const ecoXMin = 0;
   const ecoXMax = Math.max(...allDays, 1);
@@ -342,10 +366,12 @@ export default function StatsTab({ config, sessions, loans }) {
         const playRecord = s.ledger?.[p.id];
         const hasLedger = s.ledger && Object.keys(s.ledger).length > 0;
 
-        // Calculate paydays distributed up to this day
+        // Calculate paydays distributed in the same round up to this day
+        const sIsRound2 = day > 30;
         let paydaysUpToDay = 0;
         completedSessions.forEach(session => {
-          if (Number(session.dayNumber) <= day) {
+          const sDay = Number(session.dayNumber);
+          if ((sDay > 30) === sIsRound2 && sDay <= day) {
             paydaysUpToDay += Number(session.paydaysDistributed?.[p.id] || 0);
           }
         });
@@ -364,6 +390,10 @@ export default function StatsTab({ config, sessions, loans }) {
           if (loan.lender === p.id) lentOutPrincipalD += principal;
         });
 
+        const startBalanceD = sIsRound2 
+          ? Number(p.r2StartBalance !== undefined ? p.r2StartBalance : 5000) 
+          : Number(p.startBalance || 0);
+
         const currentBalVal = s.balances?.[p.id];
         let currentBal = 0;
         if (currentBalVal !== undefined && currentBalVal !== null) {
@@ -373,9 +403,9 @@ export default function StatsTab({ config, sessions, loans }) {
             currentBal = Number(currentBalVal);
           }
         } else {
-          currentBal = Number(p.startBalance || 0);
+          currentBal = startBalanceD;
         }
-        const expectedBreakEvenD = Number(p.startBalance || 0) + paydaysUpToDay;
+        const expectedBreakEvenD = startBalanceD + paydaysUpToDay;
         const cumulativeProfitD = (currentBal - borrowedPrincipalD + lentOutPrincipalD) - expectedBreakEvenD;
 
         const prevProfit = playerStats.history[playerStats.history.length - 1].profit;
@@ -480,6 +510,44 @@ export default function StatsTab({ config, sessions, loans }) {
     });
   }, [config.players, completedSessions, loans]);
 
+  // Compute Wealth Distribution
+  const wealthData = useMemo(() => {
+    if (!playerCurrentStats || playerCurrentStats.length === 0) return [];
+    
+    // Sort players by netWorth descending
+    const sorted = [...playerCurrentStats]
+      .map((p, idx) => {
+        const histColor = playerStats.find(h => h.id === p.id)?.color;
+        const color = histColor || COLORS[idx % COLORS.length];
+        return {
+          ...p,
+          netWorth: Math.max(0, p.netWorth),
+          color
+        };
+      })
+      .sort((a, b) => b.netWorth - a.netWorth);
+
+    const total = sorted.reduce((sum, p) => sum + p.netWorth, 0);
+    if (total === 0) return [];
+
+    let cumulativePercent = 0;
+    const C = 2 * Math.PI * 70;
+
+    return sorted.map(p => {
+      const pct = total > 0 ? (p.netWorth / total) * 100 : 0;
+      const startOffset = (cumulativePercent / 100) * C;
+      cumulativePercent += pct;
+      return {
+        id: p.id,
+        name: p.name,
+        netWorth: p.netWorth,
+        pct,
+        color: p.color,
+        startOffset
+      };
+    }).filter(p => p.pct > 0);
+  }, [playerCurrentStats, playerStats]);
+
   // 3. Initialize default chart visibility (top 3 players by Net Profit)
   useMemo(() => {
     if (Object.keys(visiblePlayers).length > 0 || playerStats.length === 0) return;
@@ -529,7 +597,7 @@ export default function StatsTab({ config, sessions, loans }) {
   // ── Chart Dimensions & SVG Scaling ───────────────────────────────────────────
   const chartWidth = 800;
   const chartHeight = 350;
-  const margin = { top: 20, right: 30, bottom: 40, left: 60 };
+  const margin = { top: 20, right: 30, bottom: 45, left: 60 };
 
   const minDay = 0;
   const maxDay = Math.max(...allDays, 1);
@@ -644,7 +712,7 @@ export default function StatsTab({ config, sessions, loans }) {
             style={{ left: mousePos.x, top: mousePos.y }}
           >
             <div className="font-bold border-b border-white/10 pb-1 text-zinc-400 flex justify-between">
-              <span>Day {hoveredDay}</span>
+              <span>{getRoundDayFullString(hoveredDay)}</span>
               <span className="font-mono">Cumulative</span>
             </div>
             <div className="space-y-1">
@@ -714,11 +782,12 @@ export default function StatsTab({ config, sessions, loans }) {
                   />
                   <text 
                     x={x} 
-                    y={chartHeight - margin.bottom + 18} 
-                    textAnchor="middle" 
-                    className="font-mono text-[9px] fill-zinc-600 font-bold"
+                    y={chartHeight - margin.bottom + 12} 
+                    textAnchor="end" 
+                    transform={`rotate(-45, ${x}, ${chartHeight - margin.bottom + 12})`}
+                    className="font-mono text-[8px] fill-zinc-500 font-bold"
                   >
-                    D{day}
+                    {getRoundDayTickString(day)}
                   </text>
                 </g>
               );
@@ -858,8 +927,8 @@ export default function StatsTab({ config, sessions, loans }) {
                   className="absolute z-50 bg-[#09090b]/95 border border-white/10 rounded-xl p-3 shadow-2xl text-xs pointer-events-none flex flex-col gap-1.5 min-w-[170px] backdrop-blur-md"
                   style={{ left: ecoMousePos.x, top: ecoMousePos.y }}
                 >
-                  <div className="font-bold border-b border-white/10 pb-1 text-zinc-400 flex justify-between">
-                    <span>Day {hoveredEcoDay}</span>
+                  <div className="font-bold border-b border-white/10 pb-1 text-zinc-400 mb-1.5">
+                    <span>{getRoundDayFullString(hoveredEcoDay)}</span>
                     <span className="font-mono text-amber-400">{(point.inflationRate).toFixed(2)}x</span>
                   </div>
                   <div className="space-y-1 text-zinc-300">
@@ -935,11 +1004,12 @@ export default function StatsTab({ config, sessions, loans }) {
                       />
                       <text 
                         x={x} 
-                        y={ecoHeight - ecoMargin.bottom + 18} 
-                        textAnchor="middle" 
-                        className="font-mono text-[9px] fill-zinc-600 font-bold"
+                        y={ecoHeight - ecoMargin.bottom + 12} 
+                        textAnchor="end" 
+                        transform={`rotate(-45, ${x}, ${ecoHeight - ecoMargin.bottom + 12})`}
+                        className="font-mono text-[8px] fill-zinc-500 font-bold"
                       >
-                        D{day}
+                        {getRoundDayTickString(day)}
                       </text>
                     </g>
                   );
@@ -1011,6 +1081,167 @@ export default function StatsTab({ config, sessions, loans }) {
           </div>
         </div>
       )}
+
+      {/* ── Wealth Distribution Section ───────────────────────────────────────── */}
+      {wealthData.length > 0 && (() => {
+        const barChartWidth = 800;
+        const barChartHeight = 280;
+        const barMargin = { top: 30, right: 30, bottom: 65, left: 60 };
+        const barPlotWidth = barChartWidth - barMargin.left - barMargin.right;
+        const barPlotHeight = barChartHeight - barMargin.top - barMargin.bottom;
+
+        const maxNW = Math.max(...wealthData.map(d => d.netWorth), 1000);
+
+        const barGap = 16;
+        const totalWidthPerBar = barPlotWidth / wealthData.length;
+        const barWidth = totalWidthPerBar - barGap;
+
+        return (
+          <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-5 sm:p-6 shadow-xl space-y-6 relative overflow-hidden">
+            <div>
+              <h3 className="text-sm uppercase font-bold text-zinc-400 tracking-wider flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-violet-400 font-bold" /> Wealth Distribution
+              </h3>
+              <p className="text-xs text-zinc-500 mt-1">
+                Visualizes the current distribution of chips and net worth among players in the league, sorted from highest to lowest.
+              </p>
+            </div>
+
+            {/* SVG Canvas Container */}
+            <div className="relative aspect-[8/2.8] w-full min-h-[220px]">
+              <svg
+                viewBox={`0 0 ${barChartWidth} ${barChartHeight}`}
+                className="w-full h-full overflow-visible"
+              >
+                {/* Dynamic Linear Gradients definitions */}
+                <defs>
+                  {wealthData.map(slice => (
+                    <linearGradient key={`grad-${slice.id}`} id={`grad-${slice.id}`} x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={slice.color} stopOpacity="0.85" />
+                      <stop offset="100%" stopColor={slice.color} stopOpacity="0.15" />
+                    </linearGradient>
+                  ))}
+                </defs>
+
+                {/* Y-Axis Horizontal Grid Lines */}
+                {Array.from({ length: 4 }).map((_, i) => {
+                  const val = (1 - i / 3) * maxNW;
+                  const y = barMargin.top + (i / 3) * barPlotHeight;
+                  return (
+                    <g key={`wealth-grid-y-${i}`}>
+                      <line 
+                        x1={barMargin.left} 
+                        y1={y} 
+                        x2={barChartWidth - barMargin.right} 
+                        y2={y} 
+                        stroke="rgba(255,255,255,0.03)" 
+                        strokeWidth="1" 
+                      />
+                      <text 
+                        x={barMargin.left - 10} 
+                        y={y + 4} 
+                        textAnchor="end" 
+                        className="font-mono text-[9px] fill-zinc-600 font-semibold"
+                      >
+                        {Math.round(val).toLocaleString()}
+                      </text>
+                    </g>
+                  );
+                })}
+
+                {/* Bars mapping */}
+                {wealthData.map((slice, idx) => {
+                  const barHeight = (slice.netWorth / maxNW) * barPlotHeight;
+                  const rectX = barMargin.left + idx * totalWidthPerBar + barGap / 2;
+                  const rectY = barMargin.top + (barPlotHeight - barHeight);
+                  const isHovered = hoveredBar === slice.id;
+
+                  return (
+                    <g key={`wealth-bar-g-${slice.id}`}>
+                      {/* Bar Rectangle */}
+                      <rect
+                        x={rectX}
+                        y={rectY}
+                        width={barWidth}
+                        height={Math.max(barHeight, 2)}
+                        fill={`url(#grad-${slice.id})`}
+                        stroke={slice.color}
+                        strokeWidth={isHovered ? 2 : 1}
+                        rx="4"
+                        className="transition-all duration-200 cursor-pointer"
+                        onMouseEnter={() => setHoveredBar(slice.id)}
+                        onMouseLeave={() => setHoveredBar(null)}
+                        style={{
+                          filter: isHovered ? `drop-shadow(0 0 6px ${slice.color}60)` : 'none'
+                        }}
+                      />
+
+                      {/* X-Axis rotated Player Name */}
+                      <text
+                        x={rectX + barWidth / 2}
+                        y={barChartHeight - barMargin.bottom + 16}
+                        textAnchor="end"
+                        transform={`rotate(-45, ${rectX + barWidth / 2}, ${barChartHeight - barMargin.bottom + 16})`}
+                        className={`font-mono text-[9px] font-bold transition-colors duration-200 ${
+                          isHovered ? 'fill-white' : 'fill-zinc-500'
+                        }`}
+                      >
+                        {slice.name}
+                      </text>
+                    </g>
+                  );
+                })}
+
+                {/* Baseline X-axis stroke line */}
+                <line 
+                  x1={barMargin.left} 
+                  y1={barChartHeight - barMargin.bottom} 
+                  x2={barChartWidth - barMargin.right} 
+                  y2={barChartHeight - barMargin.bottom} 
+                  stroke="rgba(255,255,255,0.1)" 
+                  strokeWidth="1.5" 
+                />
+              </svg>
+
+              {/* Tooltip Overlay */}
+              {(() => {
+                if (!hoveredBar) return null;
+                const slice = wealthData.find(w => w.id === hoveredBar);
+                if (!slice) return null;
+
+                const idx = wealthData.findIndex(w => w.id === hoveredBar);
+                const rectX = barMargin.left + idx * totalWidthPerBar + barGap / 2;
+                const barHeight = (slice.netWorth / maxNW) * barPlotHeight;
+                const rectY = barMargin.top + (barPlotHeight - barHeight);
+
+                const topPct = (rectY / barChartHeight) * 100;
+                const leftPct = ((rectX + barWidth / 2) / barChartWidth) * 100;
+
+                return (
+                  <div 
+                    className="absolute z-50 bg-[#09090b]/95 border border-white/10 rounded-xl p-2.5 shadow-2xl text-xs pointer-events-none flex flex-col gap-1 min-w-[130px] backdrop-blur-md animate-in fade-in slide-in-from-bottom-1 text-center"
+                    style={{ 
+                      top: `${topPct}%`, 
+                      left: `${leftPct}%`,
+                      transform: 'translate(-50%, -115%)' 
+                    }}
+                  >
+                    <span className="font-bold text-zinc-400 uppercase tracking-wider text-[9px]">
+                      {slice.name}
+                    </span>
+                    <span className="text-sm font-extrabold text-white font-mono mt-0.5">
+                      {slice.netWorth.toLocaleString()}
+                    </span>
+                    <span className="text-[10px] font-bold text-violet-400 font-mono mt-0.5">
+                      {slice.pct.toFixed(1)}% Share
+                    </span>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Sortable Roster Stats Table ───────────────────────────────────────── */}
       <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-5 sm:p-6 shadow-xl flex flex-col space-y-6 overflow-hidden">
