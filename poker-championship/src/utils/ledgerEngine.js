@@ -1,4 +1,4 @@
-import { doc, runTransaction, collection, addDoc } from 'firebase/firestore';
+import { doc, runTransaction, collection, addDoc, query, where, getDocs } from 'firebase/firestore';
 
 function repaymentAmount(loan) {
   return Math.round(Number(loan.amount) * (1 + Number(loan.interest || 0) / 100));
@@ -180,28 +180,47 @@ export const commitSessionDay = async (db, safeAppId, sessionId, ledgerDraft, pa
         let bank = Number(playerBal.bank || 0);
         let wallet = Number(playerBal.wallet || 0);
 
-        if (!wasActive) {
-          // Record BUY_IN
-          if (draft.buyIn > 0) {
-            bank -= draft.buyIn;
-            wallet += draft.buyIn;
-            sessionTxs.push({
-              type: 'BUY_IN',
-              from: { playerId: p.id, account: 'bank' },
-              to: { playerId: p.id, account: 'wallet' },
-              amount: draft.buyIn,
-            });
-          }
+        // Check if there are any missing buy-ins or rebuys not recorded in real-time
+        const totalAuditedBuyIn = Number(draft.buyIn || 0);
+        const totalAuditedRebuys = Number(draft.rebuys || 0);
+        const totalAuditedBoughtIn = totalAuditedBuyIn + totalAuditedRebuys;
+        const alreadyBoughtIn = wallet; // in real-time, buy-ins/rebuys are added to the player's wallet balance
 
-          // Record REBUY
-          if (draft.rebuys > 0) {
-            bank -= draft.rebuys;
-            wallet += draft.rebuys;
+        if (totalAuditedBoughtIn > alreadyBoughtIn) {
+          const missingAmount = totalAuditedBoughtIn - alreadyBoughtIn;
+          
+          // Deduct from bank and add to wallet
+          bank -= missingAmount;
+          wallet += missingAmount;
+
+          // If the player had 0 wallet balance, it means they missed the initial buy-in completely
+          if (alreadyBoughtIn === 0) {
+            if (totalAuditedBuyIn > 0) {
+              sessionTxs.push({
+                type: 'BUY_IN',
+                from: { playerId: p.id, account: 'bank' },
+                to: { playerId: p.id, account: 'wallet' },
+                amount: totalAuditedBuyIn,
+                note: `Audit adjustment: missing buy-in for Day ${day}`
+              });
+            }
+            if (totalAuditedRebuys > 0) {
+              sessionTxs.push({
+                type: 'REBUY',
+                from: { playerId: p.id, account: 'bank' },
+                to: { playerId: p.id, account: 'wallet' },
+                amount: totalAuditedRebuys,
+                note: `Audit adjustment: missing rebuy for Day ${day}`
+              });
+            }
+          } else {
+            // Otherwise, they already had some buy-in recorded, so the missing amount is a rebuy
             sessionTxs.push({
               type: 'REBUY',
               from: { playerId: p.id, account: 'bank' },
               to: { playerId: p.id, account: 'wallet' },
-              amount: draft.rebuys,
+              amount: missingAmount,
+              note: `Audit adjustment: missing rebuy for Day ${day}`
             });
           }
         }
@@ -532,5 +551,78 @@ export const approveLoanRequest = async (db, safeAppId, loanId, currentDay, user
 
     // Update balances cache doc
     transaction.set(balancesRef, balances);
+  });
+};
+
+export const globalResetBalancesAndBaselines = async (db, safeAppId, currentConfig, designatedAmount, userId) => {
+  const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
+  const configRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'config', 'main');
+  const loansColl = collection(db, 'artifacts', safeAppId, 'public', 'data', 'loans');
+
+  // Query active loans before transaction
+  const q = query(loansColl, where('status', '==', 'active'));
+  const querySnapshot = await getDocs(q);
+
+  await runTransaction(db, async (transaction) => {
+    const cleanedBalances = {};
+    const txs = [];
+
+    // Set new r2StartBalance in currentConfig players, preserving original startBalance (Round 1)
+    const updatedPlayers = currentConfig.players.map(p => ({
+      ...p,
+      r2StartBalance: designatedAmount
+    }));
+
+    currentConfig.players.forEach(p => {
+      cleanedBalances[p.id] = {
+        bank: designatedAmount,
+        wallet: 0
+      };
+
+      txs.push({
+        type: 'BALANCE_RESET',
+        from: null,
+        to: { playerId: p.id, account: 'bank' },
+        amount: designatedAmount,
+        sessionDay: 0,
+        note: 'Global reset: balances & baselines set to designated amount (Round 2)'
+      });
+    });
+
+    // Update balances cache
+    transaction.set(balancesRef, cleanedBalances);
+
+    // Update public config with PINs removed
+    const publicPlayers = updatedPlayers.map(p => {
+      const { pin, ...publicData } = p;
+      return publicData;
+    });
+
+    const publicConfig = {
+      ...currentConfig,
+      players: publicPlayers,
+      currentRound: 2
+    };
+
+    transaction.set(configRef, publicConfig);
+
+    // Auto-settle active loans
+    querySnapshot.docs.forEach(loanDoc => {
+      transaction.update(loanDoc.ref, {
+        status: 'settled',
+        settledDay: 0,
+        note: (loanDoc.data().note || '') + ' (Auto-settled during Round 2 Reset)'
+      });
+    });
+
+    // Write BALANCE_RESET transaction logs
+    txs.forEach(tx => {
+      const txRef = doc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'transactions'));
+      transaction.set(txRef, {
+        ...tx,
+        recordedAt: new Date().toISOString(),
+        recordedBy: userId
+      });
+    });
   });
 };

@@ -71,23 +71,34 @@ export function calculatePlayerStats(sessions, loans, currentDay, config, balanc
   const completedSessions = sessions.filter(s => s.status !== 'active');
   const latestSession = completedSessions.length > 0 ? completedSessions[0] : null;
 
+  const isRound2 = (config && config.currentRound === 2) || currentDay > 30;
+
   const totalPaydays = {};
   config.players.forEach(p => { totalPaydays[p.id] = 0; });
 
   completedSessions.forEach(session => {
-    if (session.paydaysDistributed) {
-      for (const [pid, amt] of Object.entries(session.paydaysDistributed)) {
-        if (totalPaydays[pid] !== undefined) {
-          totalPaydays[pid] += Number(amt || 0);
+    const sDay = Number(session.dayNumber);
+    const sIsRound2 = sDay > 30;
+    // Only sum paydays distributed in the active round
+    if (sIsRound2 === isRound2) {
+      if (session.paydaysDistributed) {
+        for (const [pid, amt] of Object.entries(session.paydaysDistributed)) {
+          if (totalPaydays[pid] !== undefined) {
+            totalPaydays[pid] += Number(amt || 0);
+          }
         }
       }
     }
   });
 
   const sorted = config.players.map(player => {
-    let bank = Number(player.startBalance || 0);
+    const startBalance = isRound2 
+      ? Number(player.r2StartBalance !== undefined ? player.r2StartBalance : 5000) 
+      : Number(player.startBalance || 0);
+
+    let bank = startBalance;
     let wallet = 0;
-    let currentTableBalance = Number(player.startBalance || 0);
+    let currentTableBalance = startBalance;
     if (balances[player.id] !== undefined && balances[player.id] !== null) {
       const pBal = balances[player.id];
       if (typeof pBal === 'object') {
@@ -119,7 +130,7 @@ export function calculatePlayerStats(sessions, loans, currentDay, config, balanc
       }
     });
 
-    const expectedBreakEven = Number(player.startBalance || 0) + totalPaydays[player.id];
+    const expectedBreakEven = startBalance + totalPaydays[player.id];
     // Adjust the live balance to exclude active loan principal from P/L
     const tablePL = (currentTableBalance - borrowedPrincipal + lentOutPrincipal) - expectedBreakEven;
 
@@ -127,6 +138,7 @@ export function calculatePlayerStats(sessions, loans, currentDay, config, balanc
 
     return {
       ...player,
+      startBalance,
       bank,
       wallet,
       currentTableBalance,
