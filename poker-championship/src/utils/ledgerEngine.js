@@ -163,6 +163,23 @@ export const commitSessionDay = async (db, safeAppId, sessionId, ledgerDraft, pa
     if (!balancesDoc.exists()) throw new Error("balances/main doc not found");
     const balances = balancesDoc.data();
 
+    // Load player declarations to know what they actually recorded in real-time
+    const playerDeclarations = {};
+    if (wasActive) {
+      const decDocs = await Promise.all(
+        config.players.map(p => {
+          const decRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'playerDeclarations', p.id);
+          return transaction.get(decRef);
+        })
+      );
+      config.players.forEach((p, idx) => {
+        const decDoc = decDocs[idx];
+        if (decDoc && decDoc.exists()) {
+          playerDeclarations[p.id] = decDoc.data();
+        }
+      });
+    }
+
     const finalLedger = {};
     const sessionTxs = [];
 
@@ -184,7 +201,10 @@ export const commitSessionDay = async (db, safeAppId, sessionId, ledgerDraft, pa
         const totalAuditedBuyIn = Number(draft.buyIn || 0);
         const totalAuditedRebuys = Number(draft.rebuys || 0);
         const totalAuditedBoughtIn = totalAuditedBuyIn + totalAuditedRebuys;
-        const alreadyBoughtIn = wallet; // in real-time, buy-ins/rebuys are added to the player's wallet balance
+        
+        // Use player declarations if active, otherwise fallback to wallet (0)
+        const dec = playerDeclarations[p.id];
+        const alreadyBoughtIn = wasActive && dec ? (Number(dec.buyIn || 0) + Number(dec.rebuys || 0)) : wallet;
 
         if (totalAuditedBoughtIn > alreadyBoughtIn) {
           const missingAmount = totalAuditedBoughtIn - alreadyBoughtIn;
