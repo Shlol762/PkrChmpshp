@@ -528,7 +528,14 @@ export default function StatsTab({ config, sessions, loans, playerCurrentStats =
       const totalVolume = hasLedger ? ps.totalVolume : null;
       const roi = hasLedger && ps.totalVolume > 0 ? (ps.netProfitOfLedgerSessions / ps.totalVolume) * 100 : null;
       const bustOutRate = hasLedger ? (ps.bustOuts / ps.ledgerSessionsCount) * 100 : null;
-      const loanDependency = hasLedger && ps.totalVolume > 0 ? Math.min(100, (ps.loansBorrowedOnPlayDays / ps.totalVolume) * 100) : null;
+
+      const totalBorrowedInRound = loans.filter(l => 
+        l.borrower === ps.id && 
+        ['active', 'settled', 'pending_settlement'].includes(l.status) &&
+        (selectedTab === 'r2' ? Number(l.dayIssued) > 30 : selectedTab === 'r1' ? Number(l.dayIssued) <= 30 : true)
+      ).reduce((sum, l) => sum + Number(l.amount || 0), 0);
+
+      const loanDependency = hasLedger && ps.totalVolume > 0 ? Math.min(100, (totalBorrowedInRound / ps.totalVolume) * 100) : null;
 
       // Current Streak string representation
       let currentStreakStr = '-';
@@ -549,7 +556,7 @@ export default function StatsTab({ config, sessions, loans, playerCurrentStats =
         longestStreakStr: `W${ps.maxWinStreak} / L${ps.maxLossStreak}`
       };
     });
-  }, [config.players, completedSessions, loans]);
+  }, [config.players, completedSessions, loans, selectedTab]);
 
   // Compute Wealth Distribution
   const wealthData = useMemo(() => {
