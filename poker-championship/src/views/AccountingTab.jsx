@@ -82,7 +82,7 @@ export default function AccountingTab({
 
   // Available players and types for filtering
   const allPlayers = useMemo(() => config?.players || [], [config]);
-  const transactionTypes = ['BUY_IN', 'REBUY', 'CASH_OUT', 'LOAN_ISSUE', 'LOAN_SETTLE', 'PAYDAY', 'BALANCE_RESET', 'SESSION_CLOSE'];
+  const transactionTypes = ['BUY_IN', 'REBUY', 'CASH_OUT', 'LOAN_ISSUE', 'LOAN_SETTLE', 'PAYDAY', 'BALANCE_RESET', 'SESSION_CLOSE', 'BALANCE_CORRECTION'];
 
   // Toggle multi-select item
   const togglePlayerFilter = (pid) => {

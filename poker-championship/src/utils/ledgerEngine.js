@@ -1,8 +1,5 @@
 import { doc, runTransaction, collection, addDoc, query, where, getDocs } from 'firebase/firestore';
-
-function repaymentAmount(loan) {
-  return Math.round(Number(loan.amount) * (1 + Number(loan.interest || 0) / 100));
-}
+import { repaymentAmount } from './pokerEngine';
 
 export const recordLoanIssuance = async (db, safeAppId, loanDraft, currentDay, userId, activePlayers = []) => {
   const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
@@ -148,7 +145,7 @@ export const recordLoanSettlement = async (db, safeAppId, loan, currentDay, user
   });
 };
 
-export const commitSessionDay = async (db, safeAppId, sessionId, ledgerDraft, paydaysToDistribute, config, day, userId) => {
+export const commitSessionDay = async (db, safeAppId, sessionId, ledgerDraft, paydaysToDistribute, config, day, userId, prevBalances = {}) => {
   const sessionRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'sessions', sessionId);
   const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
 
@@ -296,10 +293,38 @@ export const commitSessionDay = async (db, safeAppId, sessionId, ledgerDraft, pa
       }
     });
 
-    // 3. Write session doc status updates
+    // 3. Calculate poker-only balances (pre-loan activity)
+    const pokerBalances = {};
+    config.players.forEach(p => {
+      const prevBalObj = prevBalances[p.id];
+      const roundStartBal = config.currentRound === 2 
+        ? Number(p.r2StartBalance !== undefined ? p.r2StartBalance : 5000) 
+        : Number(p.startBalance || 0);
+
+      // Extract bank + wallet from previous session's balance
+      const prevTotal = prevBalObj
+        ? (typeof prevBalObj === 'object' ? Number(prevBalObj.bank || 0) + Number(prevBalObj.wallet || 0) : Number(prevBalObj))
+        : roundStartBal;
+
+      const draft = ledgerDraft[p.id];
+      const playerPlayed = draft && draft.played;
+      const truePokerDiff = playerPlayed
+        ? Number(draft.cashOut || 0) - Number(draft.buyIn || 0) - Number(draft.rebuys || 0)
+        : 0;
+
+      const payday = Number(paydaysToDistribute[p.id] || 0);
+
+      pokerBalances[p.id] = {
+        bank: prevTotal + truePokerDiff + payday,
+        wallet: 0
+      };
+    });
+
+    // 4. Write session doc status updates
     transaction.update(sessionRef, {
       status: 'completed',
-      balances, // save new schema balances
+      balances, // save standard balances (including settlements)
+      pokerBalances, // save clean poker balances (excluding settlements)
       paydaysDistributed: paydaysToDistribute,
       ledger: finalLedger,
       recordedAt: new Date().toISOString(),
@@ -365,6 +390,51 @@ export const saveBalances = async (db, safeAppId, balancesDraft, config, userId)
   });
 };
 
+export const recordBalanceCorrection = async (db, safeAppId, playerId, delta, note, currentDay, userId) => {
+  if (isNaN(delta) || delta === 0) {
+    throw new Error("Adjustment amount must be a non-zero number.");
+  }
+  if (!note || note.trim() === '') {
+    throw new Error("A reason note is required for balance corrections.");
+  }
+  const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
+  const txRef = doc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'transactions'));
+
+  await runTransaction(db, async (transaction) => {
+    const balancesDoc = await transaction.get(balancesRef);
+    if (!balancesDoc.exists()) throw new Error("balances/main doc not found");
+    const balances = balancesDoc.data();
+
+    const playerBal = balances[playerId] || { bank: 0, wallet: 0 };
+    const bank = Number(playerBal.bank || 0);
+    const newBank = bank + delta;
+
+    if (newBank < 0) {
+      throw new Error(`Invalid adjustment: bank balance cannot go below 0 (current: ${bank.toLocaleString()}, adjustment: ${delta.toLocaleString()})`);
+    }
+
+    balances[playerId] = {
+      ...playerBal,
+      bank: newBank
+    };
+
+    transaction.set(txRef, {
+      type: 'BALANCE_CORRECTION',
+      from: delta < 0 ? { playerId, account: 'bank' } : null,
+      to: delta > 0 ? { playerId, account: 'bank' } : null,
+      amount: Math.abs(delta), // absolute amount
+      sessionDay: Number(currentDay),
+      sessionId: null,
+      loanId: null,
+      note: note.trim(),
+      recordedAt: new Date().toISOString(),
+      recordedBy: userId
+    });
+
+    transaction.set(balancesRef, balances);
+  });
+};
+
 export const recordRealtimeBuyIn = async (db, safeAppId, playerId, amount, currentDay, userId) => {
   if (isNaN(amount) || amount <= 0) {
     throw new Error("Buy-in amount must be a positive number.");
@@ -377,6 +447,18 @@ export const recordRealtimeBuyIn = async (db, safeAppId, playerId, amount, curre
     const balancesDoc = await transaction.get(balancesRef);
     if (!balancesDoc.exists()) throw new Error("balances/main doc not found");
     const balances = balancesDoc.data();
+
+    // Guard: if a buy-in declaration already exists for this session,
+    // reject the request. The player should use Rebuy instead.
+    // This is the atomic check that prevents duplicate buy-ins even if
+    // the UI button is tapped multiple times before the first completes.
+    const existingDec = await transaction.get(decRef);
+    if (existingDec.exists() && Number(existingDec.data().buyIn || 0) > 0) {
+      throw new Error(
+        `You have already bought in for ${Number(existingDec.data().buyIn).toLocaleString()} chips this session. ` +
+        `Use the Rebuy option to add more chips.`
+      );
+    }
 
     const playerBal = balances[playerId] || { bank: 0, wallet: 0 };
     const bank = Number(playerBal.bank || 0);

@@ -42,6 +42,13 @@ export default function PlayerDashboardTab({
   const [success, setSuccess] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const getAuditUserId = () => {
+    if (auth.currentUser && !auth.currentUser.isAnonymous) {
+      return `host:${auth.currentUser.uid}`;
+    }
+    return `player:${currentPlayerId}`;
+  };
+
   // Loan Form State
   const [showLoanForm, setShowLoanForm] = useState(false);
   const [loanLender, setLoanLender] = useState('');
@@ -306,7 +313,7 @@ export default function PlayerDashboardTab({
     }
 
     try {
-      await recordRealtimeRebuy(db, safeAppId, currentPlayerId, amount, activeSession.dayNumber, auth.currentUser?.uid || currentPlayerId);
+      await recordRealtimeRebuy(db, safeAppId, currentPlayerId, amount, activeSession.dayNumber, getAuditUserId());
 
       triggerMessage('success', `Rebuy of ${amount.toLocaleString()} chips confirmed! Stack will update shortly.`);
       setShowInlineRebuyModal(false);
@@ -340,7 +347,7 @@ export default function PlayerDashboardTab({
 
     setIsSubmitting(true);
     try {
-      await recordRealtimeBuyIn(db, safeAppId, currentPlayerId, amount, activeSession.dayNumber, auth.currentUser?.uid || currentPlayerId);
+      await recordRealtimeBuyIn(db, safeAppId, currentPlayerId, amount, activeSession.dayNumber, getAuditUserId());
       
       // Also write temporary claim to keep session lock verified
       const claimRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'playerClaims', currentPlayerId);
@@ -382,7 +389,7 @@ export default function PlayerDashboardTab({
 
     setIsSubmitting(true);
     try {
-      await recordRealtimeRebuy(db, safeAppId, currentPlayerId, amount, activeSession.dayNumber, auth.currentUser?.uid || currentPlayerId);
+      await recordRealtimeRebuy(db, safeAppId, currentPlayerId, amount, activeSession.dayNumber, getAuditUserId());
 
       triggerMessage('success', `Rebuy of ${amount.toLocaleString()} chips confirmed! Pull them from the case.`);
       setRebuyAmount('');
@@ -405,7 +412,7 @@ export default function PlayerDashboardTab({
 
     setIsSubmitting(true);
     try {
-      await recordRealtimeCashOut(db, safeAppId, currentPlayerId, amount, activeSession.dayNumber, auth.currentUser?.uid || currentPlayerId);
+      await recordRealtimeCashOut(db, safeAppId, currentPlayerId, amount, activeSession.dayNumber, getAuditUserId());
 
       triggerMessage('success', `Cash-Out of ${amount.toLocaleString()} chips declared! Leave your physical chips on the table for verification.`);
       setCashOutAmount('');
@@ -443,7 +450,7 @@ export default function PlayerDashboardTab({
         status: 'pending',
         actionBy: currentPlayerId,
         recordedAt: new Date().toISOString(),
-        recordedBy: currentPlayerId
+        recordedBy: getAuditUserId()
       });
 
       triggerMessage('success', 'Loan request submitted! Waiting for the lender to approve.');
@@ -470,7 +477,7 @@ export default function PlayerDashboardTab({
         safeAppId,
         loan.id,
         activeSession?.dayNumber || (currentDay + 1),
-        auth.currentUser?.uid || currentPlayerId,
+        getAuditUserId(),
         activePlayers
       );
 
@@ -527,7 +534,7 @@ export default function PlayerDashboardTab({
         safeAppId,
         loan,
         activeSession?.dayNumber || (currentDay + 1),
-        auth.currentUser?.uid || currentPlayerId,
+        getAuditUserId(),
         activePlayers
       );
 

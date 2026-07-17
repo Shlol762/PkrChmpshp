@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Lock, Settings, Check, Users, Plus, Trash2, Dices, Sparkles, RotateCcw } from 'lucide-react';
+import { Lock, Settings, Check, Users, Plus, Trash2, Dices, Sparkles, RotateCcw, Coins } from 'lucide-react';
 
 
 export default function SettingsTab({
@@ -14,9 +14,41 @@ export default function SettingsTab({
   balancesDraft = {},
   handleBalanceDraftChange,
   saveBalances,
+  handleBalanceCorrection,
   handleGlobalReset
 }) {
   const [resetAmount, setResetAmount] = useState(8300);
+
+  // Balance Correction State
+  const [correctionPlayerId, setCorrectionPlayerId] = useState('');
+  const [correctionAmount, setCorrectionAmount] = useState('');
+  const [correctionSign, setCorrectionSign] = useState('add');
+  const [correctionNote, setCorrectionNote] = useState('');
+  const [isSubmittingCorrection, setIsSubmittingCorrection] = useState(false);
+
+  const onSubmitCorrection = async (e) => {
+    e.preventDefault();
+    if (isSubmittingCorrection) return;
+    const rawAmt = Number(correctionAmount);
+    if (isNaN(rawAmt) || rawAmt <= 0) {
+      alert("Please enter a valid positive number for adjustment amount.");
+      return;
+    }
+    const finalDelta = rawAmt * (correctionSign === 'deduct' ? -1 : 1);
+    if (window.confirm(`Are you sure you want to apply a balance correction of $${finalDelta.toLocaleString()} to ${correctionPlayerId}?\n\nReason: "${correctionNote}"`)) {
+      setIsSubmittingCorrection(true);
+      try {
+        await handleBalanceCorrection(correctionPlayerId, finalDelta, correctionNote);
+        setCorrectionAmount('');
+        setCorrectionNote('');
+        alert("Balance correction applied successfully!");
+      } catch (err) {
+        // Error alert is handled in App.jsx helper
+      } finally {
+        setIsSubmittingCorrection(false);
+      }
+    }
+  };
 
   if (!isAuthenticated) {
     return (
@@ -177,6 +209,84 @@ export default function SettingsTab({
               </div>
             ))}
           </div>
+        </div>
+
+        {/* Balance Correction (Delta-based Audit Adjustment) */}
+        <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-6 lg:col-span-3">
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <Coins className="w-5 h-5 text-amber-500" /> Apply Balance Correction (Delta)
+            </h3>
+          </div>
+          <p className="text-xs text-zinc-500 mb-6">
+            Add or subtract chips for a specific player (e.g., enter <code>4420</code> to add chips, or <code>-2210</code> to deduct). This creates a <strong>BALANCE_CORRECTION</strong> transaction log.
+          </p>
+
+          <form onSubmit={onSubmitCorrection} className="grid grid-cols-1 md:grid-cols-3 gap-6 items-end">
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">Select Player</label>
+              <select
+                value={correctionPlayerId}
+                onChange={e => setCorrectionPlayerId(e.target.value)}
+                className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white focus:outline-none focus:border-amber-500 transition-colors"
+                required
+              >
+                <option value="">-- Choose Player --</option>
+                {settingsDraft.players.map(p => (
+                  <option key={p.id} value={p.id}>{p.name} ({p.id})</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">Amount (Delta)</label>
+                <div className="flex items-center bg-zinc-950 border border-white/10 rounded-xl px-2 focus-within:border-amber-500 transition-colors">
+                  <span className="text-zinc-500 text-xs">$</span>
+                  <input
+                    type="number"
+                    value={correctionAmount}
+                    onChange={e => setCorrectionAmount(e.target.value)}
+                    className="w-full bg-transparent p-3 text-white font-mono text-sm focus:outline-none"
+                    placeholder="e.g. 4420"
+                    required
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">Type</label>
+                <select
+                  value={correctionSign}
+                  onChange={e => setCorrectionSign(e.target.value)}
+                  className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white focus:outline-none focus:border-amber-500 transition-colors"
+                >
+                  <option value="add">Add (+)</option>
+                  <option value="deduct">Deduct (-)</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-2">Reason / Note</label>
+              <div className="flex gap-3">
+                <input
+                  type="text"
+                  value={correctionNote}
+                  onChange={e => setCorrectionNote(e.target.value)}
+                  className="flex-1 bg-zinc-950 border border-white/10 rounded-xl p-3 text-white focus:outline-none focus:border-amber-500 transition-colors placeholder:text-zinc-700"
+                  placeholder="e.g., Refund duplicate buy-ins"
+                  required
+                />
+                <button
+                  type="submit"
+                  disabled={isSubmittingCorrection || !correctionPlayerId || !correctionAmount || !correctionNote}
+                  className="flex items-center gap-1.5 text-xs font-bold bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:hover:bg-amber-500 text-amber-950 px-5 py-3.5 rounded-xl transition-all shadow-[0_0_15px_rgba(245,158,11,0.2)] shrink-0 cursor-pointer"
+                >
+                  {isSubmittingCorrection ? 'Applying...' : 'Apply'}
+                </button>
+              </div>
+            </div>
+          </form>
         </div>
 
         {/* Global Reset / Start Round 2 Column */}

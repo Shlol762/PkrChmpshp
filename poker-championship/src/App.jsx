@@ -16,7 +16,8 @@ import {
   recordLoanIssuance,
   recordLoanSettlement,
   saveBalances as saveBalancesLog,
-  globalResetBalancesAndBaselines
+  globalResetBalancesAndBaselines,
+  recordBalanceCorrection
 } from './utils/ledgerEngine';
 
 import PinModal from './components/PinModal';
@@ -360,7 +361,7 @@ export default function App() {
         balances: {},
         paydaysDistributed: {},
         recordedAt: new Date().toISOString(),
-        recordedBy: user.uid
+        recordedBy: 'host:' + user.uid
       });
     } catch (err) {
       console.error("Error starting day:", err);
@@ -389,6 +390,12 @@ export default function App() {
       // 2. Calculate paydays
       const paydaysToDistribute = calculatePaydays(Number(nextDay), config, rawBalances, loans);
       
+      // Find the previous completed session's balances
+      const prevSession = sessions
+        .filter(s => s.status !== 'active' && Number(s.dayNumber) < Number(activeSession.dayNumber))
+        .sort((a, b) => Number(b.dayNumber) - Number(a.dayNumber))[0];
+      const prevBalances = prevSession?.balances || {};
+
       // 3. Atomically commit the session, update balances cache and write transaction logs
       await commitSessionDay(
         db,
@@ -398,7 +405,8 @@ export default function App() {
         paydaysToDistribute,
         config,
         nextDay,
-        user.uid
+        'host:' + user.uid,
+        prevBalances
       );
 
       // 4. Clean up temporary playerClaims and playerDeclarations
@@ -539,7 +547,7 @@ export default function App() {
           paydaysDistributed: paydaysToDistribute,
           ledger:      finalLedger,
           recordedAt:  new Date().toISOString(),
-          recordedBy:  user.uid,
+          recordedBy:  'host:' + user.uid,
         }, { merge: true });
       } else {
         await addDoc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'sessions'), {
@@ -549,7 +557,7 @@ export default function App() {
           ledger:      finalLedger,
           status: 'completed',
           recordedAt:  new Date().toISOString(),
-          recordedBy:  user.uid,
+          recordedBy:  'host:' + user.uid,
         });
       }
 
@@ -568,7 +576,7 @@ export default function App() {
             sessionId: null,
             note: `Manual session record balance override: Day ${dayNumber}`,
             recordedAt: new Date().toISOString(),
-            recordedBy: user.uid
+            recordedBy: 'host:' + user.uid
           });
         });
         transaction.set(balancesRef, nestedBalances);
@@ -600,7 +608,7 @@ export default function App() {
       const activePlayers = activeSession
         ? Object.entries(playerDeclarations || {}).filter(([, d]) => d?.status === 'active').map(([id]) => id)
         : [];
-      await recordLoanIssuance(db, safeAppId, loanDraft, loanDraft.dayIssued, user.uid, activePlayers);
+      await recordLoanIssuance(db, safeAppId, loanDraft, loanDraft.dayIssued, 'host:' + user.uid, activePlayers);
       setShowLoanModal(false);
     } catch (err) {
       console.error('Error saving loan:', err);
@@ -617,8 +625,8 @@ export default function App() {
       const activePlayers = activeSession
         ? Object.entries(playerDeclarations || {}).filter(([, d]) => d?.status === 'active').map(([id]) => id)
         : [];
-      if (loan.status === 'active') {
-        await recordLoanSettlement(db, safeAppId, loan, currentDay, user.uid, activePlayers);
+      if (loan.status === 'active' || loan.status === 'pending_settlement') {
+        await recordLoanSettlement(db, safeAppId, loan, currentDay, 'host:' + user.uid, activePlayers);
       } else {
         alert("Reactivating settled loans is not supported. Create a new loan if needed.");
       }
@@ -639,7 +647,7 @@ export default function App() {
   const saveBalances = async () => {
     if (!user) return;
     try {
-      await saveBalancesLog(db, safeAppId, balancesDraft, config, user.uid);
+      await saveBalancesLog(db, safeAppId, balancesDraft, config, 'host:' + user.uid);
       alert("Current balances updated successfully!");
     } catch (err) {
       console.error("Error saving balances:", err);
@@ -647,10 +655,21 @@ export default function App() {
     }
   };
 
+  const handleBalanceCorrection = async (playerId, delta, note) => {
+    if (!user) return;
+    try {
+      await recordBalanceCorrection(db, safeAppId, playerId, delta, note, currentDay, 'host:' + user.uid);
+    } catch (err) {
+      console.error("Error applying balance correction:", err);
+      alert("Failed to apply correction: " + err.message);
+      throw err;
+    }
+  };
+
   const handleGlobalReset = async (designatedAmount) => {
     if (!user) return;
     try {
-      await globalResetBalancesAndBaselines(db, safeAppId, settingsDraft, designatedAmount, user.uid);
+      await globalResetBalancesAndBaselines(db, safeAppId, settingsDraft, designatedAmount, 'host:' + user.uid);
     } catch (err) {
       console.error("Error performing global reset:", err);
       alert("Failed to perform global reset: " + err.message);
@@ -834,6 +853,7 @@ export default function App() {
                 balancesDraft={balancesDraft}
                 handleBalanceDraftChange={handleBalanceDraftChange}
                 saveBalances={saveBalances}
+                handleBalanceCorrection={handleBalanceCorrection}
                 handleGlobalReset={handleGlobalReset}
               />
             )}

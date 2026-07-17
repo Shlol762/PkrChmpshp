@@ -83,20 +83,26 @@ export default function LoansTab({
             <div key={loan.id} className={`bg-zinc-900/40 border p-5 rounded-2xl flex flex-col relative transition-all ${loan.status === 'settled' ? 'opacity-60 border-white/5' : isOverdue ? 'border-rose-500/30' : 'border-white/10'}`}>
               
               <div className="flex justify-between items-start mb-4">
-                <div className={`text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wider ${loan.status === 'active' ? 'bg-amber-500/10 text-amber-500' : 'bg-zinc-800 text-zinc-400'}`}>
-                  {loan.status === 'active' ? 'Active' : 'Settled'}
+                <div className={`text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wider ${
+                  loan.status === 'active' 
+                    ? 'bg-amber-500/10 text-amber-500' 
+                    : loan.status === 'pending_settlement'
+                      ? 'bg-blue-500/10 text-blue-400'
+                      : 'bg-zinc-800 text-zinc-400'
+                }`}>
+                  {loan.status === 'active' 
+                    ? 'Active' 
+                    : loan.status === 'pending_settlement'
+                      ? 'Pending Settle'
+                      : 'Settled'}
                 </div>
-                {isAuthenticated && (
+                {isAuthenticated && (loan.status === 'active' || loan.status === 'pending_settlement') && (
                   <button
                     onClick={() => toggleLoanStatus(loan)}
                     disabled={isSubmitting}
-                    className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors disabled:opacity-55 disabled:cursor-not-allowed ${
-                      loan.status === 'active'
-                        ? 'bg-zinc-800 hover:bg-emerald-500/20 text-zinc-300 hover:text-emerald-400'
-                        : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'
-                    }`}
+                    className="text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors disabled:opacity-55 disabled:cursor-not-allowed bg-zinc-800 hover:bg-emerald-500/20 text-zinc-300 hover:text-emerald-400"
                   >
-                    {isSubmitting ? 'Processing...' : (loan.status === 'active' ? 'Settle' : 'Re-open')}
+                    {isSubmitting ? 'Processing...' : 'Settle'}
                   </button>
                 )}
               </div>
