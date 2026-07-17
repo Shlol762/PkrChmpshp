@@ -17,7 +17,8 @@ import {
   recordLoanSettlement,
   saveBalances as saveBalancesLog,
   globalResetBalancesAndBaselines,
-  recordBalanceCorrection
+  recordBalanceCorrection,
+  releaseFrozenToLender
 } from './utils/ledgerEngine';
 
 import PinModal from './components/PinModal';
@@ -291,8 +292,8 @@ export default function App() {
 
   // Calculations derived from state (pure computations using utils)
   const playerStats = useMemo(() => {
-    return calculatePlayerStats(sessions, loans, currentDay, config, balances);
-  }, [sessions, loans, currentDay, config, balances]);
+    return calculatePlayerStats(sessions, loans, currentDay, config, balances, null, playerDeclarations);
+  }, [sessions, loans, currentDay, config, balances, playerDeclarations]);
 
   const actualSystemNetWorth = useMemo(() => {
     return playerStats.reduce((sum, p) => sum + p.netWorth, 0);
@@ -638,6 +639,20 @@ export default function App() {
     }
   };
 
+  const handleReleaseFrozen = async (loan) => {
+    if (!user || isSubmittingLoan) return;
+    setIsSubmittingLoan(true);
+    try {
+      await releaseFrozenToLender(db, safeAppId, loan, currentDay, 'host:' + user.uid);
+      alert("Frozen funds successfully released to lender!");
+    } catch (err) {
+      console.error('Error releasing frozen funds:', err);
+      alert("Failed to release frozen funds: " + err.message);
+    } finally {
+      setIsSubmittingLoan(false);
+    }
+  };
+
   const getPlayerName = id => config.players.find(p => p.id === id)?.name || id;
 
   const handleBalanceDraftChange = (playerId, val) => {
@@ -835,6 +850,8 @@ export default function App() {
                 loans={loans}
                 currentDay={currentDay}
                 toggleLoanStatus={toggleLoanStatus}
+                handleReleaseFrozen={handleReleaseFrozen}
+                balances={balances}
                 getPlayerName={getPlayerName}
                 isSubmitting={isSubmittingLoan}
               />

@@ -11,6 +11,11 @@ export const recordLoanIssuance = async (db, safeAppId, loanDraft, currentDay, u
     if (!balancesDoc.exists()) throw new Error("balances/main doc not found");
     const balances = balancesDoc.data();
 
+    const configRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'config', 'main');
+    const configDoc = await transaction.get(configRef);
+    if (!configDoc.exists()) throw new Error("config/main doc not found");
+    const config = configDoc.data();
+
     const borrower = loanDraft.borrower;
     const lender = loanDraft.lender;
     const amount = Number(loanDraft.amount);
@@ -24,6 +29,11 @@ export const recordLoanIssuance = async (db, safeAppId, loanDraft, currentDay, u
     }
     if (Number(loanDraft.interest || 0) < 0) {
       throw new Error("Interest rate must be non-negative.");
+    }
+
+    const cap = Number(config.paydayMax || 0);
+    if (cap > 0 && amount > cap) {
+      throw new Error(`Loan amount ${amount.toLocaleString()} exceeds the maximum allowed (${cap.toLocaleString()}).`);
     }
 
     const isLenderActive = activePlayers.includes(lender);
@@ -43,10 +53,16 @@ export const recordLoanIssuance = async (db, safeAppId, loanDraft, currentDay, u
 
     // Update balances
     balances[lender] = {
+      bank: 0,
+      wallet: 0,
+      frozen: 0,
       ...lenderBal,
       [route]: lenderSourceAmt - amount
     };
     balances[borrower] = {
+      bank: 0,
+      wallet: 0,
+      frozen: 0,
       ...borrowerBal,
       [route]: Number(borrowerBal[route] || 0) + amount
     };
@@ -112,10 +128,16 @@ export const recordLoanSettlement = async (db, safeAppId, loan, currentDay, user
 
     // Update balances
     balances[borrower] = {
+      bank: 0,
+      wallet: 0,
+      frozen: 0,
       ...borrowerBal,
       [route]: borrowerSourceAmt - repayAmount
     };
     balances[lender] = {
+      bank: 0,
+      wallet: 0,
+      frozen: 0,
       ...lenderBal,
       [route]: Number(lenderBal[route] || 0) + repayAmount
     };
@@ -148,6 +170,10 @@ export const recordLoanSettlement = async (db, safeAppId, loan, currentDay, user
 export const commitSessionDay = async (db, safeAppId, sessionId, ledgerDraft, paydaysToDistribute, config, day, userId, prevBalances = {}) => {
   const sessionRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'sessions', sessionId);
   const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
+  const loansColl = collection(db, 'artifacts', safeAppId, 'public', 'data', 'loans');
+
+  const loansQuery = query(loansColl, where('status', 'in', ['active', 'defaulted']));
+  const loansSnapshot = await getDocs(loansQuery);
 
   await runTransaction(db, async (transaction) => {
     const sessionDoc = await transaction.get(sessionRef);
@@ -271,7 +297,7 @@ export const commitSessionDay = async (db, safeAppId, sessionId, ledgerDraft, pa
         }
 
         // Update balances in cache memory
-        balances[p.id] = { bank, wallet: 0 };
+        balances[p.id] = { bank, wallet: 0, frozen: Number(playerBal.frozen || 0) };
       }
     });
 
@@ -279,10 +305,11 @@ export const commitSessionDay = async (db, safeAppId, sessionId, ledgerDraft, pa
     Object.entries(paydaysToDistribute).forEach(([pid, amt]) => {
       const amount = Number(amt || 0);
       if (amount > 0) {
-        const playerBal = balances[pid] || { bank: 0, wallet: 0 };
+        const playerBal = balances[pid] || { bank: 0, wallet: 0, frozen: 0 };
         balances[pid] = {
           bank: Number(playerBal.bank || 0) + amount,
-          wallet: Number(playerBal.wallet || 0)
+          wallet: Number(playerBal.wallet || 0),
+          frozen: Number(playerBal.frozen || 0)
         };
         sessionTxs.push({
           type: 'PAYDAY',
@@ -320,6 +347,139 @@ export const commitSessionDay = async (db, safeAppId, sessionId, ledgerDraft, pa
       };
     });
 
+    // 3b. Automated Overdue Loan Checking & Default Detection
+    const loansList = loansSnapshot.docs.map(d => ({ id: d.id, ref: d.ref, ...d.data() }));
+
+    // Phase 1: Check active loans for overdue status
+    loansList.forEach(loan => {
+      if (loan.status === 'active' && Number(loan.deadlineDay || 0) <= Number(day)) {
+        const repay = repaymentAmount(loan);
+        const borrower = loan.borrower;
+        const lender = loan.lender;
+        
+        const borrowerBal = balances[borrower] || { bank: 0, wallet: 0, frozen: 0 };
+        const inHand = Number(borrowerBal.bank || 0);
+
+        if (inHand >= repay) {
+          // Can pay -> Auto-settle
+          balances[borrower] = {
+            ...borrowerBal,
+            bank: inHand - repay
+          };
+          
+          const lenderBal = balances[lender] || { bank: 0, wallet: 0, frozen: 0 };
+          balances[lender] = {
+            ...lenderBal,
+            bank: Number(lenderBal.bank || 0) + repay
+          };
+
+          transaction.update(loan.ref, {
+            status: 'settled',
+            settledDay: Number(day)
+          });
+
+          sessionTxs.push({
+            type: 'LOAN_SETTLE',
+            from: { playerId: borrower, account: 'bank' },
+            to: { playerId: lender, account: 'bank' },
+            amount: repay,
+            loanId: loan.id,
+            note: `Automated loan settle: ${borrower} to ${lender} (due Day ${loan.deadlineDay})`
+          });
+
+          // Update in local list so Phase 2 knows it is settled
+          loan.status = 'settled';
+          loan.settledDay = Number(day);
+        } else {
+          // Cannot pay -> Mark defaulted
+          transaction.update(loan.ref, {
+            status: 'defaulted',
+            defaultedDay: Number(day)
+          });
+
+          sessionTxs.push({
+            type: 'LOAN_DEFAULT',
+            from: null,
+            to: null,
+            amount: repay,
+            loanId: loan.id,
+            note: `Loan default: ${borrower} failed to pay ${lender} (due Day ${loan.deadlineDay})`
+          });
+
+          loan.status = 'defaulted';
+          loan.defaultedDay = Number(day);
+        }
+      }
+    });
+
+    // Phase 2: Post-default Frozen account logic for all defaulted loans
+    const defaultedByBorrower = {};
+    loansList.forEach(loan => {
+      if (loan.status === 'defaulted') {
+        const borrower = loan.borrower;
+        if (!defaultedByBorrower[borrower]) {
+          defaultedByBorrower[borrower] = [];
+        }
+        defaultedByBorrower[borrower].push(loan);
+      }
+    });
+
+    Object.entries(defaultedByBorrower).forEach(([borrower, playerLoans]) => {
+      // Sort in FIFO order
+      playerLoans.sort((a, b) => {
+        const timeA = a.recordedAt || '';
+        const timeB = b.recordedAt || '';
+        if (timeA !== timeB) return timeA.localeCompare(timeB);
+        return a.id.localeCompare(b.id);
+      });
+
+      const borrowerBal = balances[borrower] || { bank: 0, wallet: 0, frozen: 0 };
+      let allocatedFrozen = Number(borrowerBal.frozen || 0);
+
+      playerLoans.forEach(loan => {
+        const repay = repaymentAmount(loan);
+        const alreadyFrozenForThisLoan = Math.min(repay, allocatedFrozen);
+        allocatedFrozen -= alreadyFrozenForThisLoan;
+
+        const remaining = repay - alreadyFrozenForThisLoan;
+        if (remaining > 0) {
+          const inHand = Number(balances[borrower]?.bank || 0);
+          const paydayAmount = Number(paydaysToDistribute[borrower] || 0);
+
+          if (inHand >= remaining) {
+            // Sub-Case 1: Crossed the limit
+            balances[borrower].bank = inHand - remaining;
+            balances[borrower].frozen = (balances[borrower].frozen || 0) + remaining;
+
+            sessionTxs.push({
+              type: 'FROZEN_FUNDED',
+              from: { playerId: borrower, account: 'bank' },
+              to: { playerId: borrower, account: 'frozen' },
+              amount: remaining,
+              loanId: loan.id,
+              note: `Loan fully funded in frozen assets: ${borrower} (repay amount ${repay.toLocaleString()})`
+            });
+            allocatedFrozen += remaining;
+          } else if (paydayAmount > 0) {
+            // Sub-Case 2: Payday Day, borrower still below limit
+            const toRedirect = Math.min(paydayAmount, remaining);
+            balances[borrower].bank = Math.max(0, inHand - toRedirect);
+            balances[borrower].frozen = (balances[borrower].frozen || 0) + toRedirect;
+
+            sessionTxs.push({
+              type: 'PAYDAY_FROZEN',
+              from: null,
+              to: { playerId: borrower, account: 'frozen' },
+              amount: toRedirect,
+              loanId: loan.id,
+              note: `Payday redirected to frozen assets: ${borrower}`
+            });
+            allocatedFrozen += toRedirect;
+          }
+        }
+      });
+    });
+
     // 4. Write session doc status updates
     transaction.update(sessionRef, {
       status: 'completed',
@@ -338,11 +498,11 @@ export const commitSessionDay = async (db, safeAppId, sessionId, ledgerDraft, pa
     sessionTxs.forEach(tx => {
       const txRef = doc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'transactions'));
       transaction.set(txRef, {
-        ...tx,
         sessionDay: Number(day),
         sessionId: sessionId,
         loanId: null,
         note: `Session commit Day ${day}`,
+        ...tx,
         recordedAt: new Date().toISOString(),
         recordedBy: userId
       });
@@ -597,12 +757,22 @@ export const approveLoanRequest = async (db, safeAppId, loanId, currentDay, user
     if (!balancesDoc.exists()) throw new Error("balances/main doc not found");
     const balances = balancesDoc.data();
 
+    const configRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'config', 'main');
+    const configDoc = await transaction.get(configRef);
+    if (!configDoc.exists()) throw new Error("config/main doc not found");
+    const config = configDoc.data();
+
     const borrower = loan.borrower;
     const lender = loan.lender;
     const amount = Number(loan.amount);
 
     if (borrower === lender) {
       throw new Error("Lender and Borrower cannot be the same player.");
+    }
+
+    const cap = Number(config.paydayMax || 0);
+    if (cap > 0 && amount > cap) {
+      throw new Error(`Loan amount ${amount.toLocaleString()} exceeds the maximum allowed (${cap.toLocaleString()}).`);
     }
 
     const isLenderActive = activePlayers.includes(lender);
@@ -622,10 +792,16 @@ export const approveLoanRequest = async (db, safeAppId, loanId, currentDay, user
 
     // Update balances
     balances[lender] = {
+      bank: 0,
+      wallet: 0,
+      frozen: 0,
       ...lenderBal,
       [route]: lenderSourceAmt - amount
     };
     balances[borrower] = {
+      bank: 0,
+      wallet: 0,
+      frozen: 0,
       ...borrowerBal,
       [route]: Number(borrowerBal[route] || 0) + amount
     };
@@ -726,5 +902,62 @@ export const globalResetBalancesAndBaselines = async (db, safeAppId, currentConf
         recordedBy: userId
       });
     });
+  });
+};
+
+export const releaseFrozenToLender = async (db, safeAppId, loan, currentDay, userId) => {
+  const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
+  const loanRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'loans', loan.id);
+  const txRef = doc(collection(db, 'artifacts', safeAppId, 'public', 'data', 'transactions'));
+
+  await runTransaction(db, async (transaction) => {
+    const balancesDoc = await transaction.get(balancesRef);
+    if (!balancesDoc.exists()) throw new Error("balances/main doc not found");
+    const balances = balancesDoc.data();
+
+    const borrower = loan.borrower;
+    const lender = loan.lender;
+
+    const borrowerBal = balances[borrower] || { bank: 0, wallet: 0, frozen: 0 };
+    const lenderBal = balances[lender] || { bank: 0, wallet: 0, frozen: 0 };
+
+    const amount = Number(borrowerBal.frozen || 0);
+
+    if (amount <= 0) {
+      throw new Error(`Borrower ${borrower} has no frozen funds to release.`);
+    }
+
+    // Update balances: borrower.frozen = 0, lender.bank += amount
+    balances[borrower] = {
+      ...borrowerBal,
+      frozen: 0
+    };
+    balances[lender] = {
+      ...lenderBal,
+      bank: Number(lenderBal.bank || 0) + amount
+    };
+
+    // Update loan document status
+    transaction.update(loanRef, {
+      status: 'settled',
+      settledDay: Number(currentDay)
+    });
+
+    // Write transaction log
+    transaction.set(txRef, {
+      type: 'FROZEN_RELEASED',
+      from: { playerId: borrower, account: 'frozen' },
+      to: { playerId: lender, account: 'bank' },
+      amount,
+      sessionDay: Number(currentDay),
+      sessionId: null,
+      loanId: loan.id,
+      note: `Frozen funds released: ${borrower} to ${lender}`,
+      recordedAt: new Date().toISOString(),
+      recordedBy: userId
+    });
+
+    // Update balances cache doc
+    transaction.set(balancesRef, balances);
   });
 };

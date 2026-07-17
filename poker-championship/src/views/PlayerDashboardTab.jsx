@@ -19,7 +19,8 @@ import {
   Trophy,
   Play,
   Eye,
-  AlertTriangle
+  AlertTriangle,
+  Hourglass
 } from 'lucide-react';
 import { repaymentAmount, CHIP_CASE_CAPACITY, MAX_TRANSACTION_LIMIT } from '../utils/pokerEngine';
 import { isBettingRoundComplete } from '../utils/pokerGameEngine';
@@ -1003,8 +1004,8 @@ export default function PlayerDashboardTab({
             );
           })}
 
-          {/* Active Loans */}
-          {loans.filter(l => l.status === 'active' && (l.lender === currentPlayerId || l.borrower === currentPlayerId)).map(loan => {
+          {/* Active / Defaulted Loans */}
+          {loans.filter(l => (l.status === 'active' || l.status === 'defaulted') && (l.lender === currentPlayerId || l.borrower === currentPlayerId)).map(loan => {
             const isLender = loan.lender === currentPlayerId;
             const counterParty = isLender 
               ? config.players.find(p => p.id === loan.borrower)?.name 
@@ -1015,8 +1016,12 @@ export default function PlayerDashboardTab({
               <div key={loan.id} className="bg-zinc-950/60 border border-white/5 p-4 rounded-2xl flex flex-col gap-2">
                 <div className="flex justify-between items-center">
                   <div>
-                    <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${isLender ? 'bg-rose-500/10 text-rose-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
-                      {isLender ? 'Lent Out' : 'Owed by You'}
+                    <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
+                      loan.status === 'defaulted'
+                        ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                        : isLender ? 'bg-rose-500/10 text-rose-400' : 'bg-emerald-500/10 text-emerald-400'
+                    }`}>
+                      {loan.status === 'defaulted' ? 'Defaulted' : isLender ? 'Lent Out' : 'Owed by You'}
                     </span>
                     <p className="text-xs text-zinc-300 font-medium mt-1.5">
                       {isLender ? `Repayment due from ${counterParty}` : `Owed to ${counterParty}`}
@@ -1028,7 +1033,7 @@ export default function PlayerDashboardTab({
                   </div>
                 </div>
 
-                {!isLender && (
+                {!isLender && loan.status !== 'defaulted' && (
                   <button
                     onClick={() => handleRequestSettlement(loan)}
                     className="w-full py-1.5 mt-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-white/5 hover:text-white text-[10px] font-bold rounded-lg transition-all cursor-pointer"
@@ -1041,7 +1046,7 @@ export default function PlayerDashboardTab({
           })}
 
           {/* Empty state for loans */}
-          {loans.filter(l => (l.status === 'active' || l.status === 'pending' || l.status === 'pending_settlement') && (l.lender === currentPlayerId || l.borrower === currentPlayerId)).length === 0 && (
+          {loans.filter(l => (l.status === 'active' || l.status === 'defaulted' || l.status === 'pending' || l.status === 'pending_settlement') && (l.lender === currentPlayerId || l.borrower === currentPlayerId)).length === 0 && (
             <div className="text-center py-8 text-zinc-600">
               <HandCoins className="w-8 h-8 mx-auto mb-2 opacity-10" />
               <p className="text-xs italic">No active or pending loans.</p>
@@ -1630,29 +1635,77 @@ export default function PlayerDashboardTab({
             Physical Chips (Not Net Worth)
           </span>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="bg-zinc-950/40 p-4 rounded-2xl border border-white/5">
-            <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">End of Prev Day</span>
-            <div className="text-xl font-black text-white font-mono mt-1 flex items-center gap-1.5">
-              <Wallet className="w-4 h-4 text-zinc-400" />
-              {baselineBalance.toLocaleString()}
-            </div>
-          </div>
+        {(() => {
+          const isCashedOut = activeDeclaration?.status === 'cashed_out';
+          const pendingCashOut = Number(activeDeclaration?.cashOut || 0);
+          const pendingTotal = availableBalance + pendingCashOut;
 
-          <div className="bg-zinc-950/40 p-4 rounded-2xl border border-white/5">
-            <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Wallet</span>
-            <div className="text-xl font-black text-amber-400 font-mono mt-1">
-              {activeDeclaration ? ((activeDeclaration.buyIn || 0) + (activeDeclaration.rebuys || 0)).toLocaleString() : '0'}
-            </div>
-          </div>
+          if (isCashedOut) {
+            // Player has declared cash-out — show pending settlement state
+            return (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="bg-zinc-950/40 p-4 rounded-2xl border border-white/5">
+                  <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">End of Prev Day</span>
+                  <div className="text-xl font-black text-white font-mono mt-1 flex items-center gap-1.5">
+                    <Wallet className="w-4 h-4 text-zinc-400" />
+                    {baselineBalance.toLocaleString()}
+                  </div>
+                </div>
 
-          <div className="bg-zinc-950/40 p-4 rounded-2xl border border-white/5">
-            <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Available Bank</span>
-            <div className="text-xl font-black text-emerald-400 font-mono mt-1">
-              {availableBalance.toLocaleString()}
+                <div className="bg-zinc-950/40 p-4 rounded-2xl border border-white/5">
+                  <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Banked</span>
+                  <div className="text-xl font-black text-emerald-400 font-mono mt-1">
+                    {availableBalance.toLocaleString()}
+                  </div>
+                </div>
+
+                {/* Pending Settlement Card — distinct from bank/wallet */}
+                <div className="relative bg-gradient-to-br from-orange-950/40 via-amber-950/30 to-zinc-950/40 p-4 rounded-2xl border border-dashed border-amber-500/40 overflow-hidden">
+                  <div className="absolute inset-0 bg-amber-500/5 rounded-2xl pointer-events-none" />
+                  <div className="relative z-10">
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <Hourglass className="w-3 h-3 text-amber-400 animate-pulse" />
+                      <span className="text-[10px] text-amber-500/80 uppercase font-bold tracking-wider">Pending Settlement</span>
+                    </div>
+                    <div className="text-xl font-black text-amber-300 font-mono">
+                      {pendingTotal.toLocaleString()}
+                    </div>
+                    <div className="text-[10px] text-amber-600/70 mt-1 font-mono">
+                      {availableBalance.toLocaleString()} bank + {pendingCashOut.toLocaleString()} cashout
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          // Normal (not yet cashed out) — standard 3-card layout
+          return (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="bg-zinc-950/40 p-4 rounded-2xl border border-white/5">
+                <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">End of Prev Day</span>
+                <div className="text-xl font-black text-white font-mono mt-1 flex items-center gap-1.5">
+                  <Wallet className="w-4 h-4 text-zinc-400" />
+                  {baselineBalance.toLocaleString()}
+                </div>
+              </div>
+
+              <div className="bg-zinc-950/40 p-4 rounded-2xl border border-white/5">
+                <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Wallet</span>
+                <div className="text-xl font-black text-amber-400 font-mono mt-1">
+                  {activeDeclaration ? ((activeDeclaration.buyIn || 0) + (activeDeclaration.rebuys || 0)).toLocaleString() : '0'}
+                </div>
+              </div>
+
+              <div className="bg-zinc-950/40 p-4 rounded-2xl border border-white/5">
+                <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">Available Bank</span>
+                <div className="text-xl font-black text-emerald-400 font-mono mt-1">
+                  {availableBalance.toLocaleString()}
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
+          );
+        })()}
       </div>
 
       {/* Net Worth Progression Sparkline */}

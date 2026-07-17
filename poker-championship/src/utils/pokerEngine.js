@@ -29,7 +29,7 @@ export function calculatePaydays(dayNumber, config, rawBalances, loans) {
     let lentOut = 0;
     let borrowed = 0;
     loans.forEach(loan => {
-      if (loan.status !== 'active' && loan.status !== 'pending_settlement') return;
+      if (loan.status !== 'active' && loan.status !== 'pending_settlement' && loan.status !== 'defaulted') return;
       const principal = Number(loan.amount);
       const interest = repaymentAmount(loan) - principal;
       if (loan.lender === p.id) lentOut += (principal + interest);
@@ -67,7 +67,7 @@ export function calculatePaydays(dayNumber, config, rawBalances, loans) {
   return paydays;
 }
 
-export function calculatePlayerStats(sessions, loans, currentDay, config, balances = {}, targetRound = null) {
+export function calculatePlayerStats(sessions, loans, currentDay, config, balances = {}, targetRound = null, playerDeclarations = {}) {
   const activeRound = (config && config.currentRound === 2) || currentDay > 30 ? 2 : 1;
   const round = targetRound || activeRound;
   const isRound2 = round === 2;
@@ -130,13 +130,21 @@ export function calculatePlayerStats(sessions, loans, currentDay, config, balanc
       }
     }
 
+    // Adjust for pending cashout if looking at the active round
+    if (round === activeRound && playerDeclarations && playerDeclarations[player.id]) {
+      const dec = playerDeclarations[player.id];
+      if (dec.status === 'cashed_out') {
+        currentTableBalance += Number(dec.cashOut || 0);
+      }
+    }
+
     let lentOutPrincipal  = 0;
     let lentOutInterest   = 0;
     let borrowedPrincipal = 0;
     let borrowedInterest  = 0;
 
     targetLoans.forEach(loan => {
-      if (loan.status !== 'active' && loan.status !== 'pending_settlement') return;
+      if (loan.status !== 'active' && loan.status !== 'pending_settlement' && loan.status !== 'defaulted') return;
       const principal = Number(loan.amount);
       const interest = repaymentAmount(loan) - principal;
       if (loan.lender === player.id) {

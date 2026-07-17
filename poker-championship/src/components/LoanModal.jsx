@@ -89,6 +89,11 @@ export default function LoanModal({
                 onChange={e => setLoanDraft({ ...loanDraft, amount: Number(e.target.value) })}
                 className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3.5 text-white font-mono text-lg focus:outline-none focus:border-amber-500 transition-colors"
               />
+              {config && Number(config.paydayMax || 0) > 0 && (
+                <span className="text-[10px] font-bold text-zinc-500 mt-1 block">
+                  Max allowed: {Number(config.paydayMax).toLocaleString()}
+                </span>
+              )}
             </div>
             <div>
               <label className="block text-xs font-semibold uppercase text-zinc-500 mb-2">Interest (%)</label>
@@ -102,7 +107,13 @@ export default function LoanModal({
             </div>
           </div>
 
-          {loanDraft.amount > 0 && (
+          {config && Number(config.paydayMax || 0) > 0 && loanDraft.amount > Number(config.paydayMax) && (
+            <div className="text-rose-400 text-xs font-semibold text-center border border-rose-500/20 bg-rose-500/10 rounded-xl py-2 px-3 animate-in slide-in-from-top-1">
+              Loan amount exceeds the maximum limit of {Number(config.paydayMax).toLocaleString()}
+            </div>
+          )}
+
+          {loanDraft.amount > 0 && (config && Number(config.paydayMax || 0) > 0 ? loanDraft.amount <= Number(config.paydayMax) : true) && (
             <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 flex justify-between items-center">
               <span className="text-amber-500/80 text-xs font-bold uppercase tracking-wider">Owed Total</span>
               <span className="font-bold text-amber-400 text-xl tabular-nums">
@@ -113,7 +124,14 @@ export default function LoanModal({
 
           <button
             onClick={saveLoan}
-            disabled={!loanDraft.borrower || !loanDraft.lender || loanDraft.borrower === loanDraft.lender || loanDraft.amount <= 0 || isSubmitting}
+            disabled={
+              !loanDraft.borrower || 
+              !loanDraft.lender || 
+              loanDraft.borrower === loanDraft.lender || 
+              loanDraft.amount <= 0 || 
+              (config && Number(config.paydayMax || 0) > 0 && loanDraft.amount > Number(config.paydayMax)) || 
+              isSubmitting
+            }
             className="w-full py-4 rounded-xl font-bold bg-amber-500 text-amber-950 hover:bg-amber-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed mt-2"
           >
             {isSubmitting ? 'Processing...' : 'Issue Loan'}
