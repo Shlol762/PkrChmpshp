@@ -349,40 +349,40 @@ export default function AccountingTab({
                       : Number((prevBal ?? roundStartBal) || 0);
 
                     const paydayIncrease = session.paydaysDistributed?.[p.id] || 0;
-                    const truePokerDiff = currentTotal - prevTotal - paydayIncrease;
 
-                    // Only attribute P/L to players who actually played this session.
-                    // If a player did NOT play (no ledger entry), any balance change between
-                    // sessions is due to inter-session events (loan settlements, admin edits)
-                    // — NOT poker. Show those separately as "loan/transfer activity" to avoid
-                    // phantom gains/losses appearing on the day card.
-                    const playerPlayedThisSession = session.ledger?.[p.id]?.status === 'cashed_out';
-                    
-                    if (playerPlayedThisSession && (truePokerDiff !== 0 || paydayIncrease !== 0)) {
+                    // Use ledger data (cashOut - buyIn - rebuys) for true poker P&L.
+                    // This avoids polluting the diff with loan settlements or admin
+                    // corrections that happened to land on the same session day.
+                    const ledgerEntry = session.ledger?.[p.id];
+                    const playerPlayedThisSession = ledgerEntry?.status === 'cashed_out';
+                    const truePokerDiff = playerPlayedThisSession
+                      ? Number(ledgerEntry.cashOut || 0) - Number(ledgerEntry.buyIn || 0) - Number(ledgerEntry.rebuys || 0)
+                      : 0;
+
+                    // Any residual balance change beyond poker P&L and paydays is
+                    // loan/transfer activity (settlements, issuances, admin edits).
+                    // Show this for ALL players — even ones who played that day.
+                    const totalBalanceDelta = currentTotal - prevTotal;
+                    const loanTransferDiff = totalBalanceDelta - truePokerDiff - paydayIncrease;
+
+                    if (playerPlayedThisSession && (truePokerDiff !== 0 || paydayIncrease !== 0 || loanTransferDiff !== 0)) {
                       dailyPL.push({ 
                         name: p.name, 
                         pokerDiff: truePokerDiff, 
                         payday: paydayIncrease, 
-                        net: currentTotal - prevTotal,
-                        isLoanActivity: false
+                        net: totalBalanceDelta,
+                        isLoanActivity: false,
+                        loanDiff: loanTransferDiff !== 0 ? loanTransferDiff : null
                       });
-                    } else if (!playerPlayedThisSession && truePokerDiff !== 0) {
+                    } else if (!playerPlayedThisSession && (loanTransferDiff !== 0 || paydayIncrease !== 0)) {
                       // Balance changed for a non-player — show as loan/transfer activity
                       dailyPL.push({
                         name: p.name,
                         pokerDiff: 0,
                         payday: paydayIncrease,
-                        net: currentTotal - prevTotal,
+                        net: totalBalanceDelta,
                         isLoanActivity: true,
-                        loanDiff: truePokerDiff
-                      });
-                    } else if (paydayIncrease !== 0) {
-                      dailyPL.push({ 
-                        name: p.name, 
-                        pokerDiff: truePokerDiff, 
-                        payday: paydayIncrease, 
-                        net: currentTotal - prevTotal,
-                        isLoanActivity: false
+                        loanDiff: loanTransferDiff
                       });
                     }
                   });
@@ -435,6 +435,9 @@ export default function AccountingTab({
                             const plItems = dailyPL.filter(item => !item.isLoanActivity && item.pokerDiff !== 0);
                             const paydayItems = dailyPL.filter(item => item.payday > 0);
                             const loanActivityItems = dailyPL.filter(item => item.isLoanActivity);
+                            // Playing players who also had loan/transfer activity on this day
+                            const playersWithLoanActivity = plItems.filter(item => item.loanDiff != null);
+                            const hasAnyLoanActivity = loanActivityItems.length > 0 || playersWithLoanActivity.length > 0;
                             
                             return (
                               <div className="flex flex-col gap-2">
@@ -452,12 +455,12 @@ export default function AccountingTab({
                                   </div>
                                 )}
 
-                                {loanActivityItems.length > 0 && (
+                                {hasAnyLoanActivity && (
                                   <>
                                     {(plItems.length > 0 || paydayItems.length > 0) && <div className="h-px bg-white/5 w-full" />}
                                     <div className="space-y-1">
                                       <div className="text-[10px] uppercase tracking-widest text-zinc-600 font-bold mb-0.5">Loan / Transfer Activity</div>
-                                      {loanActivityItems.map(item => (
+                                      {[...loanActivityItems, ...playersWithLoanActivity].map(item => (
                                         <div key={`loan-${item.name}`} className="flex justify-between items-center text-sm">
                                           <span className="text-zinc-500 font-medium">{item.name}</span>
                                           <span className={`font-mono font-bold flex items-center gap-1 text-xs ${item.loanDiff > 0 ? 'text-zinc-400' : 'text-zinc-500'}`}>
