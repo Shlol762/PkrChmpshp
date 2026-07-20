@@ -42,6 +42,152 @@ export default function PlayerDashboardTab({
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [modalError, setModalError] = useState(null);
+
+  const getFriendlyErrorMessage = (rawText) => {
+    const text = String(rawText || '');
+    if (text.includes("permission-denied") || text.includes("Missing or insufficient permissions") || text.includes("permission check failed")) {
+      return {
+        title: "Database Rejected Action",
+        message: "The server did not authorize this action. Please check that you entered the correct seat PIN when logging in, and that the host has started the day."
+      };
+    }
+    if (text.includes("Insufficient funds") || text.includes("insufficient funds")) {
+      if (text.includes("Lender")) {
+        return {
+          title: "Lender Insufficient Funds",
+          message: "The lender does not have enough chips in their account (bank or wallet) to fund this loan. Please select another lender or ask them to check their balances."
+        };
+      }
+      return {
+        title: "Insufficient Funds",
+        message: "You do not have enough chips in your bank account to complete this transaction. Request a loan if you need more chips."
+      };
+    }
+    if (text.includes("physical case") || text.includes("remaining chips in the physical case")) {
+      return {
+        title: "Chip Case Depleted",
+        message: "There are not enough chips left in the physical case to fulfill your request. Other players must cash out first, or you must talk to the host to add more chips."
+      };
+    }
+    if (text.includes("transaction limit")) {
+      return {
+        title: "Transaction Limit Exceeded",
+        message: "This transaction exceeds the maximum limit allowed in a single action. Please break it into smaller transactions."
+      };
+    }
+    if (text.includes("Please select a lender")) {
+      return {
+        title: "Lender Required",
+        message: "Please select which player you want to borrow chips from before submitting the request."
+      };
+    }
+    if (text.includes("Please enter a valid loan amount")) {
+      return {
+        title: "Invalid Loan Amount",
+        message: "Please specify a valid chip amount for the loan (must be greater than 0)."
+      };
+    }
+    if (text.includes("Lender and Borrower cannot be the same")) {
+      return {
+        title: "Self-Loaning Blocked",
+        message: "You cannot request a loan from yourself. Please choose another player as the lender."
+      };
+    }
+    if (text.includes("exceeds the maximum allowed")) {
+      return {
+        title: "Loan Limit Exceeded",
+        message: "This loan amount exceeds the maximum allowable limit set by the host for this round."
+      };
+    }
+    if (text.includes("Please enter a valid Buy-In")) {
+      return {
+        title: "Invalid Buy-In Amount",
+        message: "Please enter a valid number of chips to buy in."
+      };
+    }
+    if (text.includes("Please enter a valid Rebuy")) {
+      return {
+        title: "Invalid Rebuy Amount",
+        message: "Please enter a valid number of chips to rebuy."
+      };
+    }
+    if (text.includes("already bought in")) {
+      return {
+        title: "Already Bought In",
+        message: "You are already active in this session. If you need more chips, use the Rebuy form instead of Buy-In."
+      };
+    }
+    if (text.includes("Please enter a valid Cash-Out")) {
+      return {
+        title: "Invalid Cash-Out Amount",
+        message: "Please enter a valid number of chips for your cash-out declaration."
+      };
+    }
+    return {
+      title: "Operation Failed",
+      message: text.replace("Failed to submit Rebuy: ", "")
+                 .replace("Failed to submit Buy-In: ", "")
+                 .replace("Failed to submit Cash-Out: ", "")
+                 .replace("Failed to approve loan: ", "")
+                 .replace("Failed to settle loan: ", "")
+                 .replace("FirebaseError: ", "")
+    };
+  };
+
+  const renderErrorModal = () => {
+    if (!modalError) return null;
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        {/* Backdrop overlay */}
+        <div 
+          className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity animate-in fade-in duration-250"
+          onClick={() => setModalError(null)}
+        />
+        
+        {/* Modal Container */}
+        <div className="bg-zinc-950 border border-red-500/20 rounded-3xl p-6 max-w-md w-full shadow-2xl z-10 relative flex flex-col space-y-4 animate-in fade-in zoom-in-95 duration-250">
+          <div className="flex items-start gap-4">
+            <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-2xl flex-shrink-0">
+              <ShieldAlert className="w-6.5 h-6.5" />
+            </div>
+            <div className="flex-1 space-y-1">
+              <h3 className="text-base font-bold text-white tracking-wide">
+                {modalError.title}
+              </h3>
+              <p className="text-sm text-zinc-450 leading-relaxed">
+                {modalError.message}
+              </p>
+            </div>
+          </div>
+
+          {/* Expandable Technical Details */}
+          {modalError.technical && modalError.technical !== modalError.message && (
+            <details className="group border border-white/5 bg-zinc-900/30 rounded-xl px-4 py-2">
+              <summary className="text-[10px] text-zinc-500 hover:text-zinc-400 font-bold uppercase tracking-wider cursor-pointer list-none flex justify-between items-center select-none">
+                <span>Technical Details</span>
+                <span className="transition-transform group-open:rotate-180">▼</span>
+              </summary>
+              <div className="text-[11px] font-mono text-zinc-500 bg-black/40 border border-white/5 rounded-lg p-3 mt-2 overflow-x-auto max-h-32 whitespace-pre-wrap select-all">
+                {modalError.technical}
+              </div>
+            </details>
+          )}
+
+          {/* Action button */}
+          <div className="flex justify-end pt-2">
+            <button
+              onClick={() => setModalError(null)}
+              className="px-5 py-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 hover:text-white border border-white/5 text-xs font-semibold rounded-xl transition-all cursor-pointer w-full sm:w-auto"
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
 
   const getAuditUserId = () => {
     if (auth.currentUser && !auth.currentUser.isAnonymous) {
@@ -171,16 +317,22 @@ export default function PlayerDashboardTab({
   // Clear messages after a delay
   const triggerMessage = (type, text) => {
     if (type === 'error') {
+      const friendly = getFriendlyErrorMessage(text);
+      setModalError({
+        title: friendly.title,
+        message: friendly.message,
+        technical: text
+      });
       setError(text);
       setSuccess('');
     } else {
       setSuccess(text);
       setError('');
+      setModalError(null);
+      setTimeout(() => {
+        setSuccess('');
+      }, 5000);
     }
-    setTimeout(() => {
-      setError('');
-      setSuccess('');
-    }, 5000);
   };
 
   // Active virtual tables
@@ -1140,6 +1292,7 @@ export default function PlayerDashboardTab({
             </button>
           </div>
         </div>
+        {renderErrorModal()}
       </div>
     );
   }
@@ -1592,6 +1745,7 @@ export default function PlayerDashboardTab({
           </div>
         )}
 
+        {renderErrorModal()}
       </div>
     );
   }
@@ -1964,6 +2118,7 @@ export default function PlayerDashboardTab({
           {renderLoanCenter()}
         </div>
       </div>
+      {renderErrorModal()}
     </div>
   );
 }

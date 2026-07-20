@@ -42,6 +42,26 @@ service cloud.firestore {
              (keys.size() > 15 ? isPlayerBalanceValid(before, after, keys[15]) : true);
     }
 
+    // Helper: Calculates the total balance sum across all players (supports up to 16 players)
+    function totalBalanceSum(balances, keys) {
+      return (keys.size() > 0 ? (float(balances[keys[0]].bank) + float(balances[keys[0]].wallet)) : 0.0) +
+             (keys.size() > 1 ? (float(balances[keys[1]].bank) + float(balances[keys[1]].wallet)) : 0.0) +
+             (keys.size() > 2 ? (float(balances[keys[2]].bank) + float(balances[keys[2]].wallet)) : 0.0) +
+             (keys.size() > 3 ? (float(balances[keys[3]].bank) + float(balances[keys[3]].wallet)) : 0.0) +
+             (keys.size() > 4 ? (float(balances[keys[4]].bank) + float(balances[keys[4]].wallet)) : 0.0) +
+             (keys.size() > 5 ? (float(balances[keys[5]].bank) + float(balances[keys[5]].wallet)) : 0.0) +
+             (keys.size() > 6 ? (float(balances[keys[6]].bank) + float(balances[keys[6]].wallet)) : 0.0) +
+             (keys.size() > 7 ? (float(balances[keys[7]].bank) + float(balances[keys[7]].wallet)) : 0.0) +
+             (keys.size() > 8 ? (float(balances[keys[8]].bank) + float(balances[keys[8]].wallet)) : 0.0) +
+             (keys.size() > 9 ? (float(balances[keys[9]].bank) + float(balances[keys[9]].wallet)) : 0.0) +
+             (keys.size() > 10 ? (float(balances[keys[10]].bank) + float(balances[keys[10]].wallet)) : 0.0) +
+             (keys.size() > 11 ? (float(balances[keys[11]].bank) + float(balances[keys[11]].wallet)) : 0.0) +
+             (keys.size() > 12 ? (float(balances[keys[12]].bank) + float(balances[keys[12]].wallet)) : 0.0) +
+             (keys.size() > 13 ? (float(balances[keys[13]].bank) + float(balances[keys[13]].wallet)) : 0.0) +
+             (keys.size() > 14 ? (float(balances[keys[14]].bank) + float(balances[keys[14]].wallet)) : 0.0) +
+             (keys.size() > 15 ? (float(balances[keys[15]].bank) + float(balances[keys[15]].wallet)) : 0.0);
+    }
+
     // 1. Private data (PINs) - Admin only
     match /privateData/{document=**} {
       allow read, write: if isAdmin();
@@ -64,8 +84,10 @@ service cloud.firestore {
       allow write: if isAdmin();
       allow update: if request.auth != null && (
         isAdmin() || (
-          isValidBalancesSchema(request.resource.data) &&
-          isEveryPlayerChangeValid(resource.data, request.resource.data, resource.data.keys())
+          isValidBalancesSchema(request.resource.data) && (
+            isEveryPlayerChangeValid(resource.data, request.resource.data, resource.data.keys()) ||
+            totalBalanceSum(resource.data, resource.data.keys()) == totalBalanceSum(request.resource.data, resource.data.keys())
+          )
         )
       );
     }
