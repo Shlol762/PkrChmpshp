@@ -451,7 +451,16 @@ export default function LeaderboardTab({
                                 );
                               })()}
                             </motion.div>
-                            <motion.div layout="position" className="h-[14px]"></motion.div>
+                            {stat.loanReliability !== null ? (
+                              <motion.div layout="position" className="flex items-center justify-center gap-1 text-[9px] font-medium mt-1.5 border-t border-white/5 pt-1 w-full text-zinc-500">
+                                <span>Repay Rate:</span>
+                                <span className={`font-bold ${stat.loanReliability >= 90 ? 'text-emerald-400' : stat.loanReliability >= 70 ? 'text-zinc-300' : stat.loanReliability >= 50 ? 'text-amber-400' : 'text-rose-400'}`}>
+                                  {stat.loanReliability.toFixed(0)}%
+                                </span>
+                              </motion.div>
+                            ) : (
+                              <motion.div layout="position" className="h-[14px]"></motion.div>
+                            )}
                           </motion.div>
                         </motion.div>
 

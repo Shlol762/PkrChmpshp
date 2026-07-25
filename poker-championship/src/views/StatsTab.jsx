@@ -529,13 +529,29 @@ export default function StatsTab({ config, sessions, loans, playerCurrentStats =
       const roi = hasLedger && ps.totalVolume > 0 ? (ps.netProfitOfLedgerSessions / ps.totalVolume) * 100 : null;
       const bustOutRate = hasLedger ? (ps.bustOuts / ps.ledgerSessionsCount) * 100 : null;
 
-      const totalBorrowedInRound = loans.filter(l => 
+      const playerLoansInRound = loans.filter(l => 
         l.borrower === ps.id && 
-        ['active', 'settled', 'pending_settlement'].includes(l.status) &&
+        ['active', 'settled', 'defaulted', 'pending_settlement'].includes(l.status) &&
         (selectedTab === 'r2' ? Number(l.dayIssued) > 30 : selectedTab === 'r1' ? Number(l.dayIssued) <= 30 : true)
-      ).reduce((sum, l) => sum + Number(l.amount || 0), 0);
+      );
+
+      const totalBorrowedInRound = playerLoansInRound
+        .filter(l => ['active', 'settled', 'pending_settlement'].includes(l.status))
+        .reduce((sum, l) => sum + Number(l.amount || 0), 0);
 
       const loanDependency = hasLedger && ps.totalVolume > 0 ? Math.min(100, (totalBorrowedInRound / ps.totalVolume) * 100) : null;
+
+      // Calculate Repayment Reliability
+      const currentDay = sessions.reduce((max, s) => Math.max(max, Number(s.dayNumber || 0)), 0);
+      const onTimeCount = playerLoansInRound.filter(l => l.status === 'settled' && Number(l.settledDay) <= Number(l.deadlineDay)).length;
+      const lateCount = playerLoansInRound.filter(l => l.status === 'settled' && Number(l.settledDay) > Number(l.deadlineDay)).length;
+      const defaultCount = playerLoansInRound.filter(l => l.status === 'defaulted').length;
+      const overdueCount = playerLoansInRound.filter(l => l.status === 'active' && currentDay > Number(l.deadlineDay)).length;
+
+      const totalEndedLoans = onTimeCount + lateCount + defaultCount + overdueCount;
+      const loanReliability = totalEndedLoans > 0 
+        ? (onTimeCount / totalEndedLoans) * 100 
+        : null;
 
       // Current Streak string representation
       let currentStreakStr = '-';
@@ -552,6 +568,7 @@ export default function StatsTab({ config, sessions, loans, playerCurrentStats =
         avgProfit,
         bustOutRate,
         loanDependency,
+        loanReliability,
         currentStreakStr,
         longestStreakStr: `W${ps.maxWinStreak} / L${ps.maxLossStreak}`
       };
@@ -1522,6 +1539,21 @@ export default function StatsTab({ config, sessions, loans, playerCurrentStats =
                         {sortField === 'loanDependency' && (sortDirection === 'asc' ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />)}
                       </div>
                     </th>
+                    <th 
+                      onClick={() => handleSort('loanReliability')} 
+                      className="p-3 text-right cursor-pointer hover:text-zinc-300 select-none min-w-[85px]"
+                    >
+                      <div className="flex items-center justify-end gap-1">
+                        Repay Rate
+                        <HeaderTooltip 
+                          label="Repayment Reliability" 
+                          desc="A rating of how reliably a player repays their loans on time (settling after deadline or defaulting reduces this score)." 
+                          calc="((On-Time Settled Loans + 0.5 * Late Settled Loans) / Total Settled or Overdue/Defaulted Loans) * 100"
+                          align="center"
+                        />
+                        {sortField === 'loanReliability' && (sortDirection === 'asc' ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />)}
+                      </div>
+                    </th>
                     <th className="p-3 text-right min-w-[130px]">
                       <div className="flex items-center justify-end gap-1">
                         Swings (Best/Worst)
@@ -1647,6 +1679,21 @@ export default function StatsTab({ config, sessions, loans, playerCurrentStats =
                         {/* Loan Dependency */}
                         <td className={`p-3 text-right font-mono ${ps.loanDependency !== null ? (ps.loanDependency > 50 ? 'text-amber-400' : ps.loanDependency > 0 ? 'text-zinc-400' : 'text-zinc-600') : 'text-zinc-600'}`}>
                           {ps.loanDependency !== null ? `${ps.loanDependency.toFixed(0)}%` : '-'}
+                        </td>
+
+                        {/* Repay Rate */}
+                        <td className={`p-3 text-right font-mono ${
+                          ps.loanReliability !== null 
+                            ? (ps.loanReliability >= 90 
+                                ? 'text-emerald-400 font-bold' 
+                                : ps.loanReliability >= 70 
+                                  ? 'text-zinc-300' 
+                                  : ps.loanReliability >= 50 
+                                    ? 'text-amber-400' 
+                                    : 'text-rose-400 font-bold') 
+                            : 'text-zinc-650'
+                        }`}>
+                          {ps.loanReliability !== null ? `${ps.loanReliability.toFixed(0)}%` : '-'}
                         </td>
 
                         {/* Swings (Best / Worst) */}

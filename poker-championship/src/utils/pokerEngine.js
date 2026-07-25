@@ -157,6 +157,22 @@ export function calculatePlayerStats(sessions, loans, currentDay, config, balanc
       }
     });
 
+    // Calculate Repayment Reliability for this round
+    const playerRoundLoans = loans.filter(l => 
+      l.borrower === player.id &&
+      ['active', 'settled', 'defaulted', 'pending_settlement'].includes(l.status) &&
+      (isRound2 ? Number(l.dayIssued || 0) > 30 : Number(l.dayIssued || 0) <= 30)
+    );
+    const onTimeCount = playerRoundLoans.filter(l => l.status === 'settled' && Number(l.settledDay) <= Number(l.deadlineDay)).length;
+    const lateCount = playerRoundLoans.filter(l => l.status === 'settled' && Number(l.settledDay) > Number(l.deadlineDay)).length;
+    const defaultCount = playerRoundLoans.filter(l => l.status === 'defaulted').length;
+    const overdueCount = playerRoundLoans.filter(l => l.status === 'active' && currentDay > Number(l.deadlineDay)).length;
+
+    const totalEndedLoans = onTimeCount + lateCount + defaultCount + overdueCount;
+    const loanReliability = totalEndedLoans > 0 
+      ? (onTimeCount / totalEndedLoans) * 100 
+      : null;
+
     const expectedBreakEven = startBalance + totalPaydays[player.id];
     const tablePL = (currentTableBalance - borrowedPrincipal + lentOutPrincipal) - expectedBreakEven;
 
@@ -176,6 +192,7 @@ export function calculatePlayerStats(sessions, loans, currentDay, config, balanc
       borrowedInterest,
       lentOut: lentOutPrincipal + lentOutInterest,
       borrowed: borrowedPrincipal + borrowedInterest,
+      loanReliability,
       netWorth
     };
   }).sort((a, b) => {

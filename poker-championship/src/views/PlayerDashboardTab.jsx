@@ -202,6 +202,7 @@ export default function PlayerDashboardTab({
   const [loanAmount, setLoanAmount] = useState('');
   const [loanInterest, setLoanInterest] = useState('10');
   const [loanDeadline, setLoanDeadline] = useState('5');
+  const [loanTab, setLoanTab] = useState('active');
 
   // Claim Seat State
   const [claimPlayerId, setClaimPlayerId] = useState('');
@@ -979,6 +980,30 @@ export default function PlayerDashboardTab({
           )}
         </div>
 
+        {/* Tab Selector */}
+        <div className="flex gap-2 bg-zinc-950/40 p-1 rounded-xl border border-white/5">
+          <button
+            onClick={() => setLoanTab('active')}
+            className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              loanTab === 'active'
+                ? 'bg-zinc-800 text-white shadow-sm'
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            Active & Pending
+          </button>
+          <button
+            onClick={() => setLoanTab('history')}
+            className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+              loanTab === 'history'
+                ? 'bg-zinc-800 text-white shadow-sm'
+                : 'text-zinc-500 hover:text-zinc-300'
+            }`}
+          >
+            Settled History
+          </button>
+        </div>
+
         {/* Request Loan Form */}
         {showLoanForm && (
           <form onSubmit={handleRequestLoan} className="space-y-4 p-4 bg-zinc-950/60 border border-white/10 rounded-2xl animate-in slide-in-from-top-4">
@@ -1052,157 +1077,250 @@ export default function PlayerDashboardTab({
         {/* Loan List / Approvals */}
         <div className="space-y-4 overflow-y-auto max-h-[360px] pr-1">
           
-          {/* Filter pending approvals where this user is Lender or Borrower */}
-          {loans.filter(l => l.status === 'pending' && (l.lender === currentPlayerId || l.borrower === currentPlayerId)).map(loan => {
-            const isLender = loan.lender === currentPlayerId;
-            const counterParty = isLender 
-              ? config.players.find(p => p.id === loan.borrower)?.name 
-              : config.players.find(p => p.id === loan.lender)?.name;
-            
-            return (
-              <div key={loan.id} className="bg-amber-500/5 border border-amber-500/10 p-4 rounded-2xl flex flex-col gap-3">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <span className="text-[10px] font-bold text-amber-400 uppercase tracking-widest bg-amber-500/10 px-2 py-0.5 rounded">
-                      Approval Pending
-                    </span>
-                    <p className="text-xs text-zinc-300 font-medium mt-2">
-                      {isLender 
-                        ? `${counterParty} wants to borrow ${loan.amount.toLocaleString()} chips.`
-                        : `You requested ${loan.amount.toLocaleString()} chips from ${counterParty}.`}
-                    </p>
+          {loanTab === 'active' && (
+            <>
+              {/* Filter pending approvals where this user is Lender or Borrower */}
+              {loans.filter(l => l.status === 'pending' && (l.lender === currentPlayerId || l.borrower === currentPlayerId)).map(loan => {
+                const isLender = loan.lender === currentPlayerId;
+                const counterParty = isLender 
+                  ? config.players.find(p => p.id === loan.borrower)?.name 
+                  : config.players.find(p => p.id === loan.lender)?.name;
+                
+                return (
+                  <div key={loan.id} className="bg-amber-500/5 border border-amber-500/10 p-4 rounded-2xl flex flex-col gap-3">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <span className="text-[10px] font-bold text-amber-400 uppercase tracking-widest bg-amber-500/10 px-2 py-0.5 rounded">
+                          Approval Pending
+                        </span>
+                        <p className="text-xs text-zinc-300 font-medium mt-2">
+                          {isLender 
+                            ? `${counterParty} wants to borrow ${loan.amount.toLocaleString()} chips.`
+                            : `You requested ${loan.amount.toLocaleString()} chips from ${counterParty}.`}
+                        </p>
+                      </div>
+                      <span className="text-sm font-black text-amber-400 font-mono">
+                        {loan.amount}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between text-[10px] text-zinc-500 font-medium">
+                      <span>Interest: {loan.interest}% ({repaymentAmount(loan)} payback)</span>
+                      <span>Day {loan.dayIssued} → {loan.deadlineDay}</span>
+                    </div>
+
+                    {isLender && (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleApproveLoan(loan)}
+                          className="flex-1 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold rounded-lg transition-all cursor-pointer"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          onClick={() => handleDeclineLoan(loan)}
+                          className="flex-1 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-[10px] font-bold rounded-lg transition-all cursor-pointer"
+                        >
+                          Decline
+                        </button>
+                      </div>
+                    )}
+                    {!isLender && (
+                      <button
+                        onClick={() => handleDeclineLoan(loan)}
+                        className="w-full py-1.5 bg-zinc-800/40 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-white/5 text-[10px] font-bold rounded-lg transition-all cursor-pointer"
+                      >
+                        Cancel Request
+                      </button>
+                    )}
                   </div>
-                  <span className="text-sm font-black text-amber-400 font-mono">
-                    {loan.amount}
-                  </span>
+                );
+              })}
+
+              {/* Pending Settlements */}
+              {loans.filter(l => l.status === 'pending_settlement' && (l.lender === currentPlayerId || l.borrower === currentPlayerId)).map(loan => {
+                const isLender = loan.lender === currentPlayerId;
+                const counterParty = isLender 
+                  ? config.players.find(p => p.id === loan.borrower)?.name 
+                  : config.players.find(p => p.id === loan.lender)?.name;
+                const repay = repaymentAmount(loan);
+
+                return (
+                  <div key={loan.id} className="bg-blue-500/5 border border-blue-500/10 p-4 rounded-2xl flex flex-col gap-3">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest bg-blue-500/10 px-2 py-0.5 rounded">
+                          Settlement Verification
+                        </span>
+                        <p className="text-xs text-zinc-300 font-medium mt-2">
+                          {loan.settleRequestedBy === currentPlayerId
+                            ? `You declared settlement. Waiting for ${counterParty} to confirm.`
+                            : `${counterParty} claims they repaid ${repay.toLocaleString()} chips to you.`}
+                        </p>
+                      </div>
+                      <span className="text-sm font-black text-blue-400 font-mono">
+                        {repay}
+                      </span>
+                    </div>
+
+                    {isLender && loan.settleRequestedBy !== currentPlayerId && (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleApproveSettlement(loan)}
+                          className="flex-1 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold rounded-lg transition-all cursor-pointer"
+                        >
+                          Confirm Receipt
+                        </button>
+                        <button
+                          onClick={() => handleDeclineSettlement(loan)}
+                          className="flex-1 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-[10px] font-bold rounded-lg transition-all cursor-pointer"
+                        >
+                          Decline / Reject
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Active / Defaulted Loans */}
+              {loans.filter(l => (l.status === 'active' || l.status === 'defaulted') && (l.lender === currentPlayerId || l.borrower === currentPlayerId)).map(loan => {
+                const isLender = loan.lender === currentPlayerId;
+                const counterParty = isLender 
+                  ? config.players.find(p => p.id === loan.borrower)?.name 
+                  : config.players.find(p => p.id === loan.lender)?.name;
+                const repay = repaymentAmount(loan);
+
+                return (
+                  <div key={loan.id} className="bg-zinc-950/60 border border-white/5 p-4 rounded-2xl flex flex-col gap-2">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
+                          loan.status === 'defaulted'
+                            ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                            : isLender ? 'bg-rose-500/10 text-rose-400' : 'bg-emerald-500/10 text-emerald-400'
+                        }`}>
+                          {loan.status === 'defaulted' ? 'Defaulted' : isLender ? 'Lent Out' : 'Owed by You'}
+                        </span>
+                        <p className="text-xs text-zinc-300 font-medium mt-1.5">
+                          {isLender ? `Repayment due from ${counterParty}` : `Owed to ${counterParty}`}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-sm font-black font-mono block text-white">{repay}</span>
+                        <span className="text-[9px] text-zinc-500 font-bold block mt-0.5">Principal: {loan.amount}</span>
+                      </div>
+                    </div>
+
+                    {!isLender && loan.status !== 'defaulted' && (
+                      <button
+                        onClick={() => handleRequestSettlement(loan)}
+                        className="w-full py-1.5 mt-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-white/5 hover:text-white text-[10px] font-bold rounded-lg transition-all cursor-pointer"
+                      >
+                        Declare Loan Paid/Repaid
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+
+              {loans.filter(l => (l.status === 'active' || l.status === 'defaulted' || l.status === 'pending' || l.status === 'pending_settlement') && (l.lender === currentPlayerId || l.borrower === currentPlayerId)).length === 0 && (
+                <div className="text-center py-8 text-zinc-650">
+                  <HandCoins className="w-8 h-8 mx-auto mb-2 opacity-10" />
+                  <p className="text-xs italic">No active or pending loans.</p>
                 </div>
+              )}
+            </>
+          )}
 
-                <div className="flex justify-between text-[10px] text-zinc-500 font-medium">
-                  <span>Interest: {loan.interest}% ({repaymentAmount(loan)} payback)</span>
-                  <span>Day {loan.dayIssued} → {loan.deadlineDay}</span>
+          {loanTab === 'history' && (
+            <>
+              {loans.filter(l => l.status === 'settled' && (l.lender === currentPlayerId || l.borrower === currentPlayerId)).map(loan => {
+                const isLender = loan.lender === currentPlayerId;
+                const counterParty = isLender 
+                  ? config.players.find(p => p.id === loan.borrower)?.name 
+                  : config.players.find(p => p.id === loan.lender)?.name;
+                const repay = repaymentAmount(loan);
+                
+                const settledLate = loan.settledDay && loan.deadlineDay && Number(loan.settledDay) > Number(loan.deadlineDay);
+                const defaulted = !!loan.defaultedDay;
+
+                return (
+                  <div key={loan.id} className="bg-zinc-950/40 border border-white/5 p-4 rounded-2xl flex flex-col gap-2 relative">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <div className="flex flex-wrap gap-1.5 items-center">
+                          <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-zinc-800 text-zinc-400">
+                            Settled
+                          </span>
+                          {defaulted && (
+                            <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20">
+                              Defaulted
+                            </span>
+                          )}
+                          {settledLate && (
+                            <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                              Late Repayment (+{Number(loan.settledDay) - Number(loan.deadlineDay)}d)
+                            </span>
+                          )}
+                          {loan.settledDay && loan.deadlineDay && Number(loan.settledDay) === Number(loan.deadlineDay) && (
+                            <span className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-teal-500/10 text-teal-400 border border-teal-500/20">
+                              On Deadline
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-zinc-400 font-medium mt-2">
+                          {isLender 
+                            ? `${counterParty} settled their debt to you.`
+                            : `You repaid your debt to ${counterParty}.`}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-sm font-black font-mono block text-zinc-400">{repay}</span>
+                        <span className="text-[9px] text-zinc-500 font-bold block mt-0.5">Principal: {loan.amount}</span>
+                      </div>
+                    </div>
+
+                    <div className="border-t border-white/5 pt-2 mt-1 flex flex-col gap-1 text-[9px] text-zinc-500 font-medium">
+                      <div className="flex justify-between">
+                        <span>Interest Rate</span>
+                        <span className="text-zinc-450">{loan.interest}%</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Term Limit</span>
+                        <span className="text-zinc-450">Day {loan.dayIssued} → Day {loan.deadlineDay}</span>
+                      </div>
+                      {loan.settledAt && (
+                        <div className="flex justify-between items-center mt-0.5 text-zinc-450">
+                          <span>Settled On</span>
+                          <span className="font-mono text-zinc-450">
+                            {new Date(loan.settledAt).toLocaleString(undefined, {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </span>
+                        </div>
+                      )}
+                      {!loan.settledAt && loan.settledDay !== undefined && (
+                        <div className="flex justify-between items-center mt-0.5 text-zinc-450">
+                          <span>Settled On</span>
+                          <span className="text-zinc-450">Day {loan.settledDay}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {loans.filter(l => l.status === 'settled' && (l.lender === currentPlayerId || l.borrower === currentPlayerId)).length === 0 && (
+                <div className="text-center py-8 text-zinc-650">
+                  <HandCoins className="w-8 h-8 mx-auto mb-2 opacity-5" />
+                  <p className="text-xs italic">No settled loan history.</p>
                 </div>
-
-                {isLender && (
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleApproveLoan(loan)}
-                      className="flex-1 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold rounded-lg transition-all cursor-pointer"
-                    >
-                      Approve
-                    </button>
-                    <button
-                      onClick={() => handleDeclineLoan(loan)}
-                      className="flex-1 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-[10px] font-bold rounded-lg transition-all cursor-pointer"
-                    >
-                      Decline
-                    </button>
-                  </div>
-                )}
-                {!isLender && (
-                  <button
-                    onClick={() => handleDeclineLoan(loan)}
-                    className="w-full py-1.5 bg-zinc-800/40 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-white/5 text-[10px] font-bold rounded-lg transition-all cursor-pointer"
-                  >
-                    Cancel Request
-                  </button>
-                )}
-              </div>
-            );
-          })}
-
-          {/* Pending Settlements */}
-          {loans.filter(l => l.status === 'pending_settlement' && (l.lender === currentPlayerId || l.borrower === currentPlayerId)).map(loan => {
-            const isLender = loan.lender === currentPlayerId;
-            const counterParty = isLender 
-              ? config.players.find(p => p.id === loan.borrower)?.name 
-              : config.players.find(p => p.id === loan.lender)?.name;
-            const repay = repaymentAmount(loan);
-
-            return (
-              <div key={loan.id} className="bg-blue-500/5 border border-blue-500/10 p-4 rounded-2xl flex flex-col gap-3">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest bg-blue-500/10 px-2 py-0.5 rounded">
-                      Settlement Verification
-                    </span>
-                    <p className="text-xs text-zinc-300 font-medium mt-2">
-                      {loan.settleRequestedBy === currentPlayerId
-                        ? `You declared settlement. Waiting for ${counterParty} to confirm.`
-                        : `${counterParty} claims they repaid ${repay.toLocaleString()} chips to you.`}
-                    </p>
-                  </div>
-                  <span className="text-sm font-black text-blue-400 font-mono">
-                    {repay}
-                  </span>
-                </div>
-
-                {isLender && loan.settleRequestedBy !== currentPlayerId && (
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleApproveSettlement(loan)}
-                      className="flex-1 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-[10px] font-bold rounded-lg transition-all cursor-pointer"
-                    >
-                      Confirm Receipt
-                    </button>
-                    <button
-                      onClick={() => handleDeclineSettlement(loan)}
-                      className="flex-1 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-[10px] font-bold rounded-lg transition-all cursor-pointer"
-                    >
-                      Decline / Reject
-                    </button>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-
-          {/* Active / Defaulted Loans */}
-          {loans.filter(l => (l.status === 'active' || l.status === 'defaulted') && (l.lender === currentPlayerId || l.borrower === currentPlayerId)).map(loan => {
-            const isLender = loan.lender === currentPlayerId;
-            const counterParty = isLender 
-              ? config.players.find(p => p.id === loan.borrower)?.name 
-              : config.players.find(p => p.id === loan.lender)?.name;
-            const repay = repaymentAmount(loan);
-
-            return (
-              <div key={loan.id} className="bg-zinc-950/60 border border-white/5 p-4 rounded-2xl flex flex-col gap-2">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <span className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
-                      loan.status === 'defaulted'
-                        ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                        : isLender ? 'bg-rose-500/10 text-rose-400' : 'bg-emerald-500/10 text-emerald-400'
-                    }`}>
-                      {loan.status === 'defaulted' ? 'Defaulted' : isLender ? 'Lent Out' : 'Owed by You'}
-                    </span>
-                    <p className="text-xs text-zinc-300 font-medium mt-1.5">
-                      {isLender ? `Repayment due from ${counterParty}` : `Owed to ${counterParty}`}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-sm font-black font-mono block text-white">{repay}</span>
-                    <span className="text-[9px] text-zinc-500 font-bold block mt-0.5">Principal: {loan.amount}</span>
-                  </div>
-                </div>
-
-                {!isLender && loan.status !== 'defaulted' && (
-                  <button
-                    onClick={() => handleRequestSettlement(loan)}
-                    className="w-full py-1.5 mt-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-white/5 hover:text-white text-[10px] font-bold rounded-lg transition-all cursor-pointer"
-                  >
-                    Declare Loan Paid/Repaid
-                  </button>
-                )}
-              </div>
-            );
-          })}
-
-          {/* Empty state for loans */}
-          {loans.filter(l => (l.status === 'active' || l.status === 'defaulted' || l.status === 'pending' || l.status === 'pending_settlement') && (l.lender === currentPlayerId || l.borrower === currentPlayerId)).length === 0 && (
-            <div className="text-center py-8 text-zinc-600">
-              <HandCoins className="w-8 h-8 mx-auto mb-2 opacity-10" />
-              <p className="text-xs italic">No active or pending loans.</p>
-            </div>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -1313,8 +1431,14 @@ export default function PlayerDashboardTab({
               </div>
               <div>
                 <h2 className="text-2xl font-bold text-white tracking-tight">{player?.name}</h2>
-                <p className="text-zinc-500 text-xs mt-0.5">
-                  Championship Standing: <span className="text-amber-400 font-bold">#{stats?.rank || '-'}</span> of {config.players.length}
+                <p className="text-zinc-500 text-xs mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span>Championship Standing: <span className="text-amber-400 font-bold">#{stats?.rank || '-'}</span> of {config.players.length}</span>
+                  {stats?.loanReliability !== null && (
+                    <>
+                      <span className="text-zinc-700 font-bold">•</span>
+                      <span>Repay Rate: <span className={`font-bold ${stats.loanReliability >= 90 ? 'text-emerald-400' : stats.loanReliability >= 70 ? 'text-zinc-300' : stats.loanReliability >= 50 ? 'text-amber-400' : 'text-rose-400'}`}>{stats.loanReliability.toFixed(0)}%</span></span>
+                    </>
+                  )}
                 </p>
               </div>
             </div>
@@ -1765,8 +1889,14 @@ export default function PlayerDashboardTab({
             </div>
             <div>
               <h2 className="text-2xl font-bold text-white tracking-tight">{player?.name}</h2>
-              <p className="text-zinc-500 text-xs mt-0.5">
-                Championship Standing: <span className="text-amber-400 font-bold">#{stats?.rank || '-'}</span> of {config.players.length}
+              <p className="text-zinc-500 text-xs mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span>Championship Standing: <span className="text-amber-400 font-bold">#{stats?.rank || '-'}</span> of {config.players.length}</span>
+                {stats?.loanReliability !== null && (
+                  <>
+                    <span className="text-zinc-700 font-bold">•</span>
+                    <span>Repay Rate: <span className={`font-bold ${stats.loanReliability >= 90 ? 'text-emerald-400' : stats.loanReliability >= 70 ? 'text-zinc-300' : stats.loanReliability >= 50 ? 'text-amber-400' : 'text-rose-400'}`}>{stats.loanReliability.toFixed(0)}%</span></span>
+                  </>
+                )}
               </p>
             </div>
           </div>

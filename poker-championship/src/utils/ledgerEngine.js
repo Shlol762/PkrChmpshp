@@ -145,7 +145,9 @@ export const recordLoanSettlement = async (db, safeAppId, loan, currentDay, user
     // Update loan document status
     transaction.update(loanRef, {
       status: 'settled',
-      settledDay: Number(currentDay)
+      settledDay: Number(currentDay),
+      settledAt: new Date().toISOString(),
+      settlementType: 'manual'
     });
 
     // Write transaction log
@@ -375,7 +377,9 @@ export const commitSessionDay = async (db, safeAppId, sessionId, ledgerDraft, pa
 
           transaction.update(loan.ref, {
             status: 'settled',
-            settledDay: Number(day)
+            settledDay: Number(day),
+            settledAt: new Date().toISOString(),
+            settlementType: 'auto'
           });
 
           sessionTxs.push({
@@ -884,11 +888,12 @@ export const globalResetBalancesAndBaselines = async (db, safeAppId, currentConf
 
     transaction.set(configRef, publicConfig);
 
-    // Auto-settle active loans
     querySnapshot.docs.forEach(loanDoc => {
       transaction.update(loanDoc.ref, {
         status: 'settled',
         settledDay: 0,
+        settledAt: new Date().toISOString(),
+        settlementType: 'auto',
         note: (loanDoc.data().note || '') + ' (Auto-settled during Round 2 Reset)'
       });
     });
@@ -940,7 +945,9 @@ export const releaseFrozenToLender = async (db, safeAppId, loan, currentDay, use
     // Update loan document status
     transaction.update(loanRef, {
       status: 'settled',
-      settledDay: Number(currentDay)
+      settledDay: Number(currentDay),
+      settledAt: new Date().toISOString(),
+      settlementType: 'manual'
     });
 
     // Write transaction log
