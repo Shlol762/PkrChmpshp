@@ -106,3 +106,22 @@ This project is configured to deploy directly to GitHub Pages.
    npm run deploy
    ```
    *Alternatively, if you are working in the root directory, you can run `./publish.sh "Commit message"` to commit, push, build, and deploy all at once.*
+
+---
+
+## Deployment (Vercel)
+
+This project is fully ready for deployment on **Vercel**. You can deploy it using one of the following methods:
+
+### Method 1: Zero-Config Deployment (Recommended)
+1. Import your repository directly into Vercel.
+2. Vercel will automatically detect the root-level [vercel.json](file:///home/shlok/PkrChmpshp/vercel.json) and [package.json](file:///home/shlok/PkrChmpshp/package.json) files.
+3. In your Vercel Project Settings, add the environment variables from your `.env` (refer to `.env.example`).
+4. Click **Deploy**. Vercel will automatically build the `poker-championship` subdirectory and host it at the root path `/`.
+
+### Method 2: Configure Subdirectory as Root
+1. Import your repository into Vercel.
+2. Under **Project Settings**, locate the **Root Directory** setting and set it to `poker-championship`.
+3. In your Vercel Project Settings, add the environment variables from your `.env`.
+4. Click **Deploy**.
+

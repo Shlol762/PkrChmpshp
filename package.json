@@ -1,0 +1,9 @@
+{
+  "name": "poker-championship-root",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "npm run build --prefix poker-championship",
+    "dev": "npm run dev --prefix poker-championship"
+  }
+}
