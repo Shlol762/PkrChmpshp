@@ -305,12 +305,13 @@ export default function LeaderboardTab({
                         </motion.div>
 
                         {(() => {
-                          const activeLoans = (loans || []).filter(l => l.status === 'active' && (l.lender === stat.id || l.borrower === stat.id));
+                          const activeLoans = (loans || []).filter(l => (l.status === 'active' || l.status === 'defaulted') && (l.lender === stat.id || l.borrower === stat.id));
                           if (activeLoans.length === 0) return <motion.div layoutId={`loan-box-${stat.id}`} className="rounded-lg overflow-hidden" />;
                           const loan = activeLoans[0];
                           const isLender = loan.lender === stat.id;
                           const otherPlayerId = isLender ? loan.borrower : loan.lender;
-                          const color = isLender ? 'text-emerald-500/80' : 'text-rose-500/80';
+                          const isDefaulted = loan.status === 'defaulted';
+                          const color = isDefaulted ? 'text-amber-500/80' : isLender ? 'text-emerald-500/80' : 'text-rose-500/80';
                           const displayAmt = isInflationAdjusted ? Math.round(Number(loan.amount) / inflationRate) : Number(loan.amount);
                           return (
                             <motion.div layoutId={`loan-box-${stat.id}`} className={`flex items-center justify-start gap-1.5 truncate rounded-lg overflow-hidden ${color}`} title="First Active Loan">
@@ -420,7 +421,7 @@ export default function LeaderboardTab({
                           <motion.div layout="position" className="flex flex-col items-center justify-center mt-auto w-full">
                             <motion.div layout="position" className="flex flex-col items-center justify-center mt-1.5 mb-0.5 w-full gap-0.5">
                               {(() => {
-                                const activeLoans = (loans || []).filter(l => l.status === 'active' && (l.lender === stat.id || l.borrower === stat.id));
+                                const activeLoans = (loans || []).filter(l => (l.status === 'active' || l.status === 'defaulted') && (l.lender === stat.id || l.borrower === stat.id));
                                 if (activeLoans.length === 0) {
                                   return <motion.span layoutId={`loan-val-${stat.id}`} className="text-xs sm:text-sm font-semibold text-indigo-200/50">None</motion.span>;
                                 }
@@ -433,15 +434,18 @@ export default function LeaderboardTab({
                                       const otherPlayerName = config.players?.find(p => p.id === otherPlayerId)?.name || otherPlayerId;
                                       const displayAmt = isInflationAdjusted ? Math.round(Number(loan.amount) / inflationRate) : Number(loan.amount);
                                       
+                                      const isDefaulted = loan.status === 'defaulted';
                                       if (isLender) {
                                         return (
-                                          <motion.div layout="position" key={loan.id} className="text-xs sm:text-sm font-medium text-emerald-400/80 leading-tight">
+                                          <motion.div layout="position" key={loan.id} className={`text-xs sm:text-sm font-medium leading-tight flex items-center gap-1 ${isDefaulted ? 'text-amber-400/80' : 'text-emerald-400/80'}`}>
+                                            {isDefaulted && <span className="text-[8px] font-bold bg-amber-500/20 text-amber-400 px-1 rounded uppercase tracking-wide">defaulted</span>}
                                             lent {displayAmt.toLocaleString()}@{loan.interest}% to {otherPlayerName}
                                           </motion.div>
                                         );
                                       } else {
                                         return (
-                                          <motion.div layout="position" key={loan.id} className="text-xs sm:text-sm font-medium text-rose-400/80 leading-tight">
+                                          <motion.div layout="position" key={loan.id} className={`text-xs sm:text-sm font-medium leading-tight flex items-center gap-1 ${isDefaulted ? 'text-amber-400/80' : 'text-rose-400/80'}`}>
+                                            {isDefaulted && <span className="text-[8px] font-bold bg-amber-500/20 text-amber-400 px-1 rounded uppercase tracking-wide">defaulted</span>}
                                             borrowed {displayAmt.toLocaleString()}@{loan.interest}% from {otherPlayerName}
                                           </motion.div>
                                         );
