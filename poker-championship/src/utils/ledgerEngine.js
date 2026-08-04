@@ -429,7 +429,7 @@ export const commitSessionDay = async (db, safeAppId, sessionId, ledgerDraft, pa
     });
 
     Object.entries(defaultedByBorrower).forEach(([borrower, playerLoans]) => {
-      // Sort in FIFO order
+      // Sort in FIFO order (earliest created first — latest deadline loan is last to receive frozen funds)
       playerLoans.sort((a, b) => {
         const timeA = a.recordedAt || '';
         const timeB = b.recordedAt || '';
@@ -438,48 +438,62 @@ export const commitSessionDay = async (db, safeAppId, sessionId, ledgerDraft, pa
       });
 
       const borrowerBal = balances[borrower] || { bank: 0, wallet: 0, frozen: 0 };
-      let allocatedFrozen = Number(borrowerBal.frozen || 0);
+      // Track how much of the pre-existing frozen pool has already been
+      // spoken for by earlier loans in the FIFO queue.
+      const preExistingFrozen = Number(borrowerBal.frozen || 0);
+      let preExistingFrozenUsed = 0;
+      let halted = false;
 
       playerLoans.forEach(loan => {
+        if (halted) return;
+
         const repay = repaymentAmount(loan);
-        const alreadyFrozenForThisLoan = Math.min(repay, allocatedFrozen);
-        allocatedFrozen -= alreadyFrozenForThisLoan;
 
-        const remaining = repay - alreadyFrozenForThisLoan;
-        if (remaining > 0) {
-          const inHand = Number(balances[borrower]?.bank || 0);
-          const paydayAmount = Number(paydaysToDistribute[borrower] || 0);
+        // Credit this loan with any pre-existing frozen balance not yet
+        // claimed by an earlier loan in the queue.
+        const coveredByExistingFrozen = Math.min(repay, Math.max(0, preExistingFrozen - preExistingFrozenUsed));
+        preExistingFrozenUsed += coveredByExistingFrozen;
+        const stillNeeded = repay - coveredByExistingFrozen;
 
-          if (inHand >= remaining) {
-            // Sub-Case 1: Crossed the limit
-            balances[borrower].bank = inHand - remaining;
-            balances[borrower].frozen = (balances[borrower].frozen || 0) + remaining;
+        if (stillNeeded <= 0) {
+          // Fully covered by pre-existing frozen funds
+          return;
+        }
 
-            sessionTxs.push({
-              type: 'FROZEN_FUNDED',
-              from: { playerId: borrower, account: 'bank' },
-              to: { playerId: borrower, account: 'frozen' },
-              amount: remaining,
-              loanId: loan.id,
-              note: `Loan fully funded in frozen assets: ${borrower} (repay amount ${repay.toLocaleString()})`
-            });
-            allocatedFrozen += remaining;
-          } else if (paydayAmount > 0) {
-            // Sub-Case 2: Payday Day, borrower still below limit
-            const toRedirect = Math.min(paydayAmount, remaining);
-            balances[borrower].bank = Math.max(0, inHand - toRedirect);
-            balances[borrower].frozen = (balances[borrower].frozen || 0) + toRedirect;
+        const inHand = Number(balances[borrower]?.bank || 0);
+        const paydayAmount = Number(paydaysToDistribute[borrower] || 0);
 
-            sessionTxs.push({
-              type: 'PAYDAY_FROZEN',
-              from: null,
-              to: { playerId: borrower, account: 'frozen' },
-              amount: toRedirect,
-              loanId: loan.id,
-              note: `Payday redirected to frozen assets: ${borrower}`
-            });
-            allocatedFrozen += toRedirect;
-          }
+        if (inHand >= stillNeeded) {
+          // Sub-Case 1: Bank covers remainder in full — freeze it and continue queue
+          balances[borrower].bank = inHand - stillNeeded;
+          balances[borrower].frozen = (balances[borrower].frozen || 0) + stillNeeded;
+
+          sessionTxs.push({
+            type: 'FROZEN_FUNDED',
+            from: { playerId: borrower, account: 'bank' },
+            to: { playerId: borrower, account: 'frozen' },
+            amount: stillNeeded,
+            loanId: loan.id,
+            note: `Loan fully funded in frozen assets: ${borrower} (repay amount ${repay.toLocaleString()})`
+          });
+        } else if (paydayAmount > 0) {
+          // Sub-Case 2: Payday Day — redirect what we can, then halt
+          const toRedirect = Math.min(paydayAmount, stillNeeded);
+          balances[borrower].bank = Math.max(0, inHand - toRedirect);
+          balances[borrower].frozen = (balances[borrower].frozen || 0) + toRedirect;
+
+          sessionTxs.push({
+            type: 'PAYDAY_FROZEN',
+            from: null,
+            to: { playerId: borrower, account: 'frozen' },
+            amount: toRedirect,
+            loanId: loan.id,
+            note: `Payday redirected to frozen assets: ${borrower}`
+          });
+          halted = true;
+        } else {
+          // Bank cannot cover this loan — halt FIFO queue here
+          halted = true;
         }
       });
     });
@@ -926,16 +940,21 @@ export const releaseFrozenToLender = async (db, safeAppId, loan, currentDay, use
     const borrowerBal = balances[borrower] || { bank: 0, wallet: 0, frozen: 0 };
     const lenderBal = balances[lender] || { bank: 0, wallet: 0, frozen: 0 };
 
-    const amount = Number(borrowerBal.frozen || 0);
+    // Release exactly this loan's repayment amount from frozen — not the entire pool.
+    const amount = repaymentAmount(loan);
+    const currentFrozen = Number(borrowerBal.frozen || 0);
 
-    if (amount <= 0) {
+    if (currentFrozen <= 0) {
       throw new Error(`Borrower ${borrower} has no frozen funds to release.`);
     }
+    if (currentFrozen < amount) {
+      throw new Error(`Borrower ${borrower} frozen balance (${currentFrozen}) is less than repayment required (${amount}).`);
+    }
 
-    // Update balances: borrower.frozen = 0, lender.bank += amount
+    // Deduct only this loan's repayment from frozen; remainder stays for other loans.
     balances[borrower] = {
       ...borrowerBal,
-      frozen: 0
+      frozen: currentFrozen - amount
     };
     balances[lender] = {
       ...lenderBal,
