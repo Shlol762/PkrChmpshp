@@ -91,7 +91,7 @@ export default function LoanModal({
               />
               {config && Number(config.paydayMax || 0) > 0 && (
                 <span className="text-[10px] font-bold text-zinc-500 mt-1 block">
-                  Max allowed: {Number(config.paydayMax).toLocaleString()}
+                  Max allowed: {(Number(config.paydayMax || 0)).toLocaleString()}
                 </span>
               )}
             </div>
@@ -109,7 +109,7 @@ export default function LoanModal({
 
           {config && Number(config.paydayMax || 0) > 0 && loanDraft.amount > Number(config.paydayMax) && (
             <div className="text-rose-400 text-xs font-semibold text-center border border-rose-500/20 bg-rose-500/10 rounded-xl py-2 px-3 animate-in slide-in-from-top-1">
-              Loan amount exceeds the maximum limit of {Number(config.paydayMax).toLocaleString()}
+              Loan amount exceeds the maximum limit of {(Number(config.paydayMax || 0)).toLocaleString()}
             </div>
           )}
 
@@ -117,7 +117,7 @@ export default function LoanModal({
             <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-4 flex justify-between items-center">
               <span className="text-amber-500/80 text-xs font-bold uppercase tracking-wider">Owed Total</span>
               <span className="font-bold text-amber-400 text-xl tabular-nums">
-                {repay.toLocaleString()}
+                {(repay || 0).toLocaleString()}
               </span>
             </div>
           )}

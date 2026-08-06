@@ -268,11 +268,11 @@ export default function SessionModal({
               <div className="flex items-center gap-6 pl-2">
                 <div className="flex items-center gap-1.5">
                   <span className="text-zinc-500 uppercase font-bold tracking-wider text-[9px]">Buy-Ins:</span>
-                  <span className="font-mono font-bold text-zinc-200">{auditSummary.totalBuyIns.toLocaleString()}</span>
+                  <span className="font-mono font-bold text-zinc-200">{(auditSummary?.totalBuyIns || 0).toLocaleString()}</span>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span className="text-zinc-500 uppercase font-bold tracking-wider text-[9px]">Cash-Outs:</span>
-                  <span className="font-mono font-bold text-zinc-200">{auditSummary.totalCashOuts.toLocaleString()}</span>
+                  <span className="font-mono font-bold text-zinc-200">{(auditSummary?.totalCashOuts || 0).toLocaleString()}</span>
                 </div>
               </div>
 
@@ -381,14 +381,14 @@ export default function SessionModal({
 
                       {isTargetDayPayday && (
                         <td className="p-3 text-right font-mono text-xs font-bold text-blue-400">
-                          {paydayVal > 0 ? `+${paydayVal.toLocaleString()}` : '—'}
+                          {paydayVal > 0 ? `+${(paydayVal || 0).toLocaleString()}` : '—'}
                         </td>
                       )}
 
                       <td className="p-3 text-right">
                         {data.played ? (
                           <span className={`font-mono font-bold text-xs ${totalNet > 0 ? 'text-emerald-400' : totalNet < 0 ? 'text-rose-400' : 'text-zinc-500'}`}>
-                            {totalNet > 0 ? `+${totalNet.toLocaleString()}` : totalNet.toLocaleString()}
+                            {totalNet > 0 ? `+${(totalNet || 0).toLocaleString()}` : (totalNet || 0).toLocaleString()}
                           </span>
                         ) : (
                           <span className="font-mono text-zinc-600">—</span>

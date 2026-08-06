@@ -1095,8 +1095,8 @@ export default function PlayerDashboardTab({
                         </span>
                         <p className="text-xs text-zinc-300 font-medium mt-2">
                           {isLender 
-                            ? `${counterParty} wants to borrow ${loan.amount.toLocaleString()} chips.`
-                            : `You requested ${loan.amount.toLocaleString()} chips from ${counterParty}.`}
+                            ? `${counterParty} wants to borrow ${(loan.amount || 0).toLocaleString()} chips.`
+                            : `You requested ${(loan.amount || 0).toLocaleString()} chips from ${counterParty}.`}
                         </p>
                       </div>
                       <span className="text-sm font-black text-amber-400 font-mono">
@@ -1155,7 +1155,7 @@ export default function PlayerDashboardTab({
                         <p className="text-xs text-zinc-300 font-medium mt-2">
                           {loan.settleRequestedBy === currentPlayerId
                             ? `You declared settlement. Waiting for ${counterParty} to confirm.`
-                            : `${counterParty} claims they repaid ${repay.toLocaleString()} chips to you.`}
+                            : `${counterParty} claims they repaid ${(repay || 0).toLocaleString()} chips to you.`}
                         </p>
                       </div>
                       <span className="text-sm font-black text-blue-400 font-mono">

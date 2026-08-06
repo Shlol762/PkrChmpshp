@@ -171,11 +171,11 @@ export default function AuditModal({
             <div className="flex items-center gap-6">
               <div className="flex items-center gap-2">
                 <span className="text-zinc-500 uppercase font-bold tracking-wider text-[10px]">Buy-Ins:</span>
-                <span className="font-mono font-bold text-zinc-200">{auditSummary.totalBuyIns.toLocaleString()}</span>
+                <span className="font-mono font-bold text-zinc-200">{(auditSummary?.totalBuyIns || 0).toLocaleString()}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-zinc-500 uppercase font-bold tracking-wider text-[10px]">Cash-Outs:</span>
-                <span className="font-mono font-bold text-zinc-200">{auditSummary.totalCashOuts.toLocaleString()}</span>
+                <span className="font-mono font-bold text-zinc-200">{(auditSummary?.totalCashOuts || 0).toLocaleString()}</span>
               </div>
             </div>
 
@@ -287,7 +287,7 @@ export default function AuditModal({
                       <td className="p-3 text-right">
                         {data.played ? (
                           <span className={`font-mono font-bold ${profit > 0 ? 'text-emerald-400' : profit < 0 ? 'text-rose-400' : 'text-zinc-500'}`}>
-                            {profit > 0 ? `+${profit.toLocaleString()}` : profit.toLocaleString()}
+                            {profit > 0 ? `+${(profit || 0).toLocaleString()}` : (profit || 0).toLocaleString()}
                           </span>
                         ) : (
                           <span className="font-mono text-zinc-600">-</span>

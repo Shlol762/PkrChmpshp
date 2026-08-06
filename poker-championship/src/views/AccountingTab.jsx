@@ -682,12 +682,12 @@ export default function AccountingTab({
                           </td>
                           <td className="p-3.5">{pathString}</td>
                           <td className="p-3.5 text-right font-mono font-bold text-white whitespace-nowrap">
-                            {tx.amount.toLocaleString()}
+                            {(tx.amount || 0).toLocaleString()}
                           </td>
                           {selectedPlayers.length === 1 && (
                             <td className="p-3.5 text-right font-mono font-bold text-amber-400/90 whitespace-nowrap">
-                              {singlePlayerRunningBalances?.[tx.id] !== undefined 
-                                ? singlePlayerRunningBalances[tx.id].toLocaleString() 
+                              {singlePlayerRunningBalances?.[tx.id] != null
+                                ? (singlePlayerRunningBalances[tx.id] || 0).toLocaleString() 
                                 : '-'}
                             </td>
                           )}
