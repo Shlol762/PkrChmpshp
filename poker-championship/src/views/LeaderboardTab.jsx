@@ -263,7 +263,7 @@ export default function LeaderboardTab({
                         </motion.h3>
                       </motion.div>
                       <motion.div layout="position" className="text-xl sm:text-2xl font-bold text-white tabular-nums shrink-0 pointer-events-none">
-                        {displayNetWorth.toLocaleString()}
+                        {(displayNetWorth || 0).toLocaleString()}
                       </motion.div>
                     </motion.div>
 
@@ -272,23 +272,23 @@ export default function LeaderboardTab({
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-2 gap-y-1.5 text-xs font-medium text-zinc-400 mt-1 pl-12 pointer-events-none pr-2">
                         {activeSession && playerDeclarations?.[stat.id]?.status === 'active' ? (
                           <div className="flex items-center gap-3 text-zinc-500">
-                            <span className="flex items-center gap-1"><Landmark className="w-3.5 h-3.5 text-zinc-600"/> {displayBank.toLocaleString()}</span>
+                            <span className="flex items-center gap-1"><Landmark className="w-3.5 h-3.5 text-zinc-600"/> {(displayBank || 0).toLocaleString()}</span>
                             <span className="opacity-40">|</span>
-                            <span className="flex items-center gap-1 text-amber-200/70"><Wallet className="w-3.5 h-3.5 text-amber-500/80"/> {displayWallet.toLocaleString()}</span>
+                            <span className="flex items-center gap-1 text-amber-200/70"><Wallet className="w-3.5 h-3.5 text-amber-500/80"/> {(displayWallet || 0).toLocaleString()}</span>
                           </div>
                         ) : activeSession && playerDeclarations?.[stat.id]?.status === 'cashed_out' ? (
                           <div className="flex items-center gap-3 text-zinc-500">
-                            <span className="flex items-center gap-1 text-zinc-400" title="Bank"><Landmark className="w-3.5 h-3.5 text-zinc-600"/> {displayBank.toLocaleString()}</span>
+                            <span className="flex items-center gap-1 text-zinc-400" title="Bank"><Landmark className="w-3.5 h-3.5 text-zinc-600"/> {(displayBank || 0).toLocaleString()}</span>
                             <span className="opacity-40">|</span>
                             <span className="flex items-center gap-1 text-amber-300 font-medium animate-pulse" title="Pending Cashout">
                               <Hourglass className="w-3 h-3 text-amber-400" />
-                              {(isInflationAdjusted ? Math.round(Number(playerDeclarations[stat.id].cashOut || 0) / inflationRate) : Number(playerDeclarations[stat.id].cashOut || 0)).toLocaleString()}
+                              {(isInflationAdjusted ? Math.round(Number(playerDeclarations?.[stat.id]?.cashOut || 0) / (inflationRate || 1)) : Number(playerDeclarations?.[stat.id]?.cashOut || 0)).toLocaleString()}
                             </span>
                           </div>
                         ) : (
                           <motion.div layoutId={`phys-box-${stat.id}`} className="flex items-center justify-start gap-1.5 truncate text-amber-100/90 rounded-lg overflow-hidden" title="Physical Balance">
                             <motion.div layoutId={`phys-icon-${stat.id}`}><Landmark className="w-3.5 h-3.5 shrink-0 text-amber-500/80" /></motion.div> 
-                            <motion.span layoutId={`phys-val-${stat.id}`} className="truncate">{displayTableBalance.toLocaleString()}</motion.span>
+                            <motion.span layoutId={`phys-val-${stat.id}`} className="truncate">{(displayTableBalance || 0).toLocaleString()}</motion.span>
                           </motion.div>
                         )}
 
@@ -312,12 +312,12 @@ export default function LeaderboardTab({
                           const otherPlayerId = isLender ? loan.borrower : loan.lender;
                           const isDefaulted = loan.status === 'defaulted';
                           const color = isDefaulted ? 'text-amber-500/80' : isLender ? 'text-emerald-500/80' : 'text-rose-500/80';
-                          const displayAmt = isInflationAdjusted ? Math.round(Number(loan.amount) / inflationRate) : Number(loan.amount);
+                          const displayAmt = isInflationAdjusted ? Math.round(Number(loan.amount || 0) / (inflationRate || 1)) : Number(loan.amount || 0);
                           return (
                             <motion.div layoutId={`loan-box-${stat.id}`} className={`flex items-center justify-start gap-1.5 truncate rounded-lg overflow-hidden ${color}`} title="First Active Loan">
                               <motion.div layoutId={`loan-icon-${stat.id}`}><HandCoins className="w-3 h-3 shrink-0" /></motion.div> 
                               <motion.span layoutId={`loan-val-${stat.id}`} className="flex items-center truncate">
-                                {(displayAmt/1000).toFixed(1).replace(/\.0$/, '')}k@{loan.interest}%
+                                {(displayAmt/1000).toFixed(1).replace(/\.0$/, '')}k@{loan.interest || 0}%
                                 {isLender ? <ArrowRight className="w-3 h-3 mx-0.5 shrink-0" /> : <ArrowLeft className="w-3 h-3 mx-0.5 shrink-0" />}
                                 <span className="truncate">{otherPlayerId}</span>
                                 {activeLoans.length > 1 && <span className="opacity-60 text-[9px] ml-0.5 shrink-0">(+{activeLoans.length - 1})</span>}
@@ -328,7 +328,7 @@ export default function LeaderboardTab({
 
                         <motion.div layoutId={`base-box-${stat.id}`} className="flex items-center justify-end sm:justify-start gap-1.5 truncate text-sky-100/90 rounded-lg overflow-hidden" title="Baseline">
                           <motion.div layoutId={`base-icon-${stat.id}`}><Target className="w-3.5 h-3.5 shrink-0 text-sky-400/80" /></motion.div> 
-                          <motion.span layoutId={`base-val-${stat.id}`} className="truncate">{displayBaseline.toLocaleString()}</motion.span>
+                          <motion.span layoutId={`base-val-${stat.id}`} className="truncate">{(displayBaseline || 0).toLocaleString()}</motion.span>
                         </motion.div>
                       </div>
                     ) : (
@@ -349,8 +349,8 @@ export default function LeaderboardTab({
                                     <Landmark className="w-2.5 h-2.5 text-sky-400"/> Bank & Wallet
                                   </span>
                                   <div className="flex flex-col items-center justify-center my-auto">
-                                    <span className="text-xs font-semibold text-zinc-300">Bank: {displayBank.toLocaleString()}</span>
-                                    <span className="text-xs font-semibold text-amber-200 mt-0.5">Wallet: {displayWallet.toLocaleString()}</span>
+                                    <span className="text-xs font-semibold text-zinc-300">Bank: {(displayBank || 0).toLocaleString()}</span>
+                                    <span className="text-xs font-semibold text-amber-200 mt-0.5">Wallet: {(displayWallet || 0).toLocaleString()}</span>
                                   </div>
                                 </div>
                               ) : isCashedOut ? (
@@ -359,24 +359,19 @@ export default function LeaderboardTab({
                                     <Hourglass className="w-2.5 h-2.5 text-amber-400 animate-pulse"/> Pending
                                   </span>
                                   <div className="flex flex-col items-center justify-center my-auto">
-                                    <span className="text-xs font-semibold text-zinc-400">Bank: {displayBank.toLocaleString()}</span>
+                                    <span className="text-xs font-semibold text-zinc-400">Bank: {(displayBank || 0).toLocaleString()}</span>
                                     <span className="text-xs font-semibold text-amber-300 mt-0.5 animate-pulse">
-                                      Cashout: {(isInflationAdjusted ? Math.round(Number(playerDeclarations[stat.id].cashOut || 0) / inflationRate) : Number(playerDeclarations[stat.id].cashOut || 0)).toLocaleString()}
+                                      Cashout: {(isInflationAdjusted ? Math.round(Number(playerDeclarations?.[stat.id]?.cashOut || 0) / (inflationRate || 1)) : Number(playerDeclarations?.[stat.id]?.cashOut || 0)).toLocaleString()}
                                     </span>
                                   </div>
                                 </div>
                               ) : (
                                 <>
                                   <motion.span layout="position" className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest flex items-center justify-center gap-1 min-h-[14px]">
-                                    <motion.div layoutId={`phys-icon-${stat.id}`}><Landmark className="w-3 h-3 text-amber-500/80"/></motion.div> Physical
+                                    <Landmark className="w-2.5 h-2.5 text-amber-500/80"/> Physical
                                   </motion.span>
-                                  <motion.div layout="position" className="flex flex-col items-center justify-center mt-auto w-full">
-                                    <motion.div layout="position" className="flex flex-col items-center justify-center mt-1.5 mb-0.5">
-                                      <motion.span layoutId={`phys-val-${stat.id}`} className="text-xs sm:text-sm font-semibold text-amber-100/90">
-                                        {displayTableBalance.toLocaleString()}
-                                      </motion.span>
-                                    </motion.div>
-                                    <motion.div layout="position" className="h-[14px]"></motion.div>
+                                  <motion.div layout="position" className="text-xs font-bold text-amber-100/90 my-auto truncate">
+                                    {(displayTableBalance || 0).toLocaleString()}
                                   </motion.div>
                                 </>
                               )}
@@ -384,106 +379,81 @@ export default function LeaderboardTab({
                           );
                         })()}
 
-                        {/* Profit/Loss */}
+                        {/* Net Profit / Loss */}
                         <motion.div layoutId={`pl-box-${stat.id}`} className="bg-black/20 border border-white/5 rounded-lg py-1.5 px-2 flex flex-col h-full text-center overflow-hidden">
                           <motion.span layout="position" className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest flex items-center justify-center gap-1 min-h-[14px]">
-                            <motion.div layoutId={`pl-icon-${stat.id}`}>
-                              {stat.tablePL === 0 ? <Minus className="w-3 h-3 text-zinc-500" /> : stat.tablePL > 0 ? <TrendingUp className="w-3 h-3 text-emerald-500" /> : <TrendingDown className="w-3 h-3 text-rose-500" />}
-                            </motion.div> P/L
+                            {stat.tablePL === 0 ? <Minus className="w-2.5 h-2.5" /> : stat.tablePL > 0 ? <TrendingUp className="w-2.5 h-2.5 text-emerald-400" /> : <TrendingDown className="w-2.5 h-2.5 text-rose-400" />} Net P/L
                           </motion.span>
-                          <motion.div layout="position" className="flex flex-col items-center justify-center mt-auto w-full">
+                          <motion.div layout="position" className="flex flex-col items-center justify-center my-auto">
+                            <span className={`text-xs font-bold ${stat.tablePL === 0 ? 'text-zinc-400' : stat.tablePL > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {stat.tablePL > 0 ? `+${(displayTablePL || 0).toLocaleString()}` : (displayTablePL || 0).toLocaleString()}
+                            </span>
+                            <span className="text-[9px] text-zinc-500 font-semibold mt-0.5">
+                              {(() => {
+                                const baseline = Number(stat.startBalance || 0) + Number(stat.salary || 0);
+                                return baseline === 0 ? '0.0%' : `${stat.tablePL > 0 ? '+' : ''}${((stat.tablePL / baseline) * 100).toFixed(1)}%`;
+                              })()}
+                            </span>
+                          </motion.div>
+                        </motion.div>
+
+                        {/* Active Loans Detail */}
+                        <motion.div layoutId={`loan-box-${stat.id}`} className="bg-black/20 border border-white/5 rounded-lg py-1.5 px-2 flex flex-col h-full text-center overflow-hidden">
+                          <motion.span layout="position" className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest flex items-center justify-center gap-1 min-h-[14px]">
+                            <HandCoins className="w-2.5 h-2.5 text-indigo-400"/> Active Loans
+                          </motion.span>
+                          <motion.div layout="position" className="my-auto flex flex-col items-center justify-center">
                             {(() => {
-                              const baseline = Number(stat.startBalance || 0) + Number(stat.salary || 0);
-                              const pct = baseline === 0 ? 0 : (stat.tablePL / baseline) * 100;
+                              const activeLoans = (loans || []).filter(l => (l.status === 'active' || l.status === 'defaulted') && (l.lender === stat.id || l.borrower === stat.id));
+                              if (activeLoans.length === 0) {
+                                return <motion.span layoutId={`loan-val-${stat.id}`} className="text-xs sm:text-sm font-semibold text-indigo-200/50">None</motion.span>;
+                              }
+                              
                               return (
-                                <>
-                                  <motion.div layout="position" className="flex flex-col items-center justify-center mt-1.5 mb-0.5">
-                                    <motion.span layoutId={`pl-val-${stat.id}`} className={`text-xs sm:text-sm font-bold ${stat.tablePL === 0 ? 'text-zinc-500' : stat.tablePL > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                      {pct > 0 ? '+' : ''}{pct.toFixed(1)}%
-                                    </motion.span>
-                                  </motion.div>
-                                  <motion.div layout="position" className="flex items-center justify-center h-[14px]">
-                                    <motion.span layout="position" className={`text-[9px] font-medium ${stat.tablePL === 0 ? 'text-zinc-500/70' : stat.tablePL > 0 ? 'text-emerald-500/70' : 'text-rose-500/70'}`}>
-                                      ({displayTablePL > 0 ? '+' : ''}{displayTablePL.toLocaleString()})
-                                    </motion.span>
-                                  </motion.div>
-                                </>
+                                <motion.div layoutId={`loan-val-${stat.id}`} className="flex flex-col items-center gap-0.5 animate-none">
+                                  {activeLoans.map(loan => {
+                                    const isLender = loan.lender === stat.id;
+                                    const otherPlayerId = isLender ? loan.borrower : loan.lender;
+                                    const otherPlayerName = config.players?.find(p => p.id === otherPlayerId)?.name || otherPlayerId;
+                                    const displayAmt = isInflationAdjusted ? Math.round(Number(loan.amount || 0) / (inflationRate || 1)) : Number(loan.amount || 0);
+                                    
+                                    const isDefaulted = loan.status === 'defaulted';
+                                    if (isLender) {
+                                      return (
+                                        <motion.div layout="position" key={loan.id} className={`text-xs sm:text-sm font-medium leading-tight flex items-center gap-1 ${isDefaulted ? 'text-amber-400/80' : 'text-emerald-400/80'}`}>
+                                          {isDefaulted && <span className="text-[8px] font-bold bg-amber-500/20 text-amber-400 px-1 rounded uppercase tracking-wide">defaulted</span>}
+                                          lent {(displayAmt || 0).toLocaleString()}@{loan.interest || 0}% to {otherPlayerName}
+                                        </motion.div>
+                                      );
+                                    } else {
+                                      return (
+                                        <motion.div layout="position" key={loan.id} className={`text-xs sm:text-sm font-medium leading-tight flex items-center gap-1 ${isDefaulted ? 'text-amber-400/80' : 'text-rose-400/80'}`}>
+                                          {isDefaulted && <span className="text-[8px] font-bold bg-amber-500/20 text-amber-400 px-1 rounded uppercase tracking-wide">defaulted</span>}
+                                          borrowed {(displayAmt || 0).toLocaleString()}@{loan.interest || 0}% from {otherPlayerName}
+                                        </motion.div>
+                                      );
+                                    }
+                                  })}
+                                </motion.div>
                               );
                             })()}
                           </motion.div>
                         </motion.div>
 
-                        {/* Loans */}
-                        <motion.div layoutId={`loan-box-${stat.id}`} className="bg-black/20 border border-white/5 rounded-lg py-1.5 px-2 flex flex-col h-full text-center overflow-hidden">
-                          <motion.span layout="position" className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest flex items-center justify-center gap-1 min-h-[14px]">
-                            <motion.div layoutId={`loan-icon-${stat.id}`}><HandCoins className="w-3 h-3 text-indigo-400/80"/></motion.div> Active Loans
-                          </motion.span>
-                          <motion.div layout="position" className="flex flex-col items-center justify-center mt-auto w-full">
-                            <motion.div layout="position" className="flex flex-col items-center justify-center mt-1.5 mb-0.5 w-full gap-0.5">
-                              {(() => {
-                                const activeLoans = (loans || []).filter(l => (l.status === 'active' || l.status === 'defaulted') && (l.lender === stat.id || l.borrower === stat.id));
-                                if (activeLoans.length === 0) {
-                                  return <motion.span layoutId={`loan-val-${stat.id}`} className="text-xs sm:text-sm font-semibold text-indigo-200/50">None</motion.span>;
-                                }
-                                
-                                return (
-                                  <motion.div layoutId={`loan-val-${stat.id}`} className="flex flex-col items-center gap-0.5 animate-none">
-                                    {activeLoans.map(loan => {
-                                      const isLender = loan.lender === stat.id;
-                                      const otherPlayerId = isLender ? loan.borrower : loan.lender;
-                                      const otherPlayerName = config.players?.find(p => p.id === otherPlayerId)?.name || otherPlayerId;
-                                      const displayAmt = isInflationAdjusted ? Math.round(Number(loan.amount) / inflationRate) : Number(loan.amount);
-                                      
-                                      const isDefaulted = loan.status === 'defaulted';
-                                      if (isLender) {
-                                        return (
-                                          <motion.div layout="position" key={loan.id} className={`text-xs sm:text-sm font-medium leading-tight flex items-center gap-1 ${isDefaulted ? 'text-amber-400/80' : 'text-emerald-400/80'}`}>
-                                            {isDefaulted && <span className="text-[8px] font-bold bg-amber-500/20 text-amber-400 px-1 rounded uppercase tracking-wide">defaulted</span>}
-                                            lent {displayAmt.toLocaleString()}@{loan.interest}% to {otherPlayerName}
-                                          </motion.div>
-                                        );
-                                      } else {
-                                        return (
-                                          <motion.div layout="position" key={loan.id} className={`text-xs sm:text-sm font-medium leading-tight flex items-center gap-1 ${isDefaulted ? 'text-amber-400/80' : 'text-rose-400/80'}`}>
-                                            {isDefaulted && <span className="text-[8px] font-bold bg-amber-500/20 text-amber-400 px-1 rounded uppercase tracking-wide">defaulted</span>}
-                                            borrowed {displayAmt.toLocaleString()}@{loan.interest}% from {otherPlayerName}
-                                          </motion.div>
-                                        );
-                                      }
-                                    })}
-                                  </motion.div>
-                                );
-                              })()}
-                            </motion.div>
-                            {stat.loanReliability !== null ? (
-                              <motion.div layout="position" className="flex items-center justify-center gap-1 text-[9px] font-medium mt-1.5 border-t border-white/5 pt-1 w-full text-zinc-500">
-                                <span>Repay Rate:</span>
-                                <span className={`font-bold ${stat.loanReliability >= 90 ? 'text-emerald-400' : stat.loanReliability >= 70 ? 'text-zinc-300' : stat.loanReliability >= 50 ? 'text-amber-400' : 'text-rose-400'}`}>
-                                  {stat.loanReliability.toFixed(0)}%
-                                </span>
-                              </motion.div>
-                            ) : (
-                              <motion.div layout="position" className="h-[14px]"></motion.div>
-                            )}
-                          </motion.div>
-                        </motion.div>
-
-                        {/* Baseline */}
+                        {/* Baseline Target */}
                         <motion.div layoutId={`base-box-${stat.id}`} className="bg-black/20 border border-white/5 rounded-lg py-1.5 px-2 flex flex-col h-full text-center overflow-hidden">
                           <motion.span layout="position" className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest flex items-center justify-center gap-1 min-h-[14px]">
-                            <motion.div layoutId={`base-icon-${stat.id}`}><Target className="w-3.5 h-3.5 shrink-0 text-sky-400/80" /></motion.div> Baseline
+                            <Target className="w-2.5 h-2.5 text-sky-400"/> Baseline
                           </motion.span>
-                          <motion.div layout="position" className="flex flex-col items-center justify-center mt-auto w-full">
-                            <motion.div layout="position" className="flex flex-col items-center justify-center mt-1.5 mb-0.5">
-                              <motion.span layoutId={`base-val-${stat.id}`} className="text-xs sm:text-sm font-semibold text-sky-100/90">
-                                {displayBaseline.toLocaleString()}
-                              </motion.span>
-                            </motion.div>
-                            <motion.div layout="position" className="flex items-center justify-center gap-1 text-[9px] font-medium text-zinc-500/80 w-full h-[14px] pointer-events-none">
-                              <motion.span layout="position">{displayStartBalance.toLocaleString()} START</motion.span>
-                              <motion.span layout="position">+</motion.span>
-                              <motion.span layout="position" className="text-sky-300/70">{displaySalary.toLocaleString()} PAY</motion.span>
-                            </motion.div>
+                          <motion.div layout="position" className="flex flex-col items-center justify-center my-auto">
+                            <motion.span layoutId={`base-val-${stat.id}`} className="text-xs font-bold text-sky-100/90">
+                              {(displayBaseline || 0).toLocaleString()}
+                            </motion.span>
+                            <div className="flex items-center gap-1 text-[9px] font-semibold text-zinc-500 mt-0.5">
+                              <motion.span layout="position">{(displayStartBalance || 0).toLocaleString()} START</motion.span>
+                              <span>+</span>
+                              <motion.span layout="position" className="text-sky-300/70">{(displaySalary || 0).toLocaleString()} PAY</motion.span>
+                            </div>
                           </motion.div>
                         </motion.div>
 

@@ -234,12 +234,12 @@ export default function LoansTab({
                 <div className="bg-zinc-950/40 border border-white/5 p-3 rounded-xl mb-4">
                   <div className="flex justify-between items-center text-[10px] text-zinc-400 font-bold uppercase tracking-wider mb-1">
                     <span>Frozen Assets Progress</span>
-                    <span className="text-amber-400 font-mono">{loanFrozen.toLocaleString()} / {repay.toLocaleString()}</span>
+                    <span className="text-amber-400 font-mono">{(loanFrozen || 0).toLocaleString()} / {(repay || 0).toLocaleString()}</span>
                   </div>
                   <div className="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
                     <div 
                       className="bg-amber-500 h-1.5 rounded-full transition-all duration-500" 
-                      style={{ width: `${Math.min(100, (loanFrozen / repay) * 100)}%` }}
+                      style={{ width: `${Math.min(100, ((loanFrozen || 0) / (repay || 1)) * 100)}%` }}
                     />
                   </div>
                 </div>
@@ -250,7 +250,7 @@ export default function LoansTab({
                   <div className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider mb-1">
                     {loan.status === 'settled' ? 'Settled Value' : 'Owed Repayment'}
                   </div>
-                  <div className="text-xl font-bold text-white tabular-nums">{repay.toLocaleString()}</div>
+                  <div className="text-xl font-bold text-white tabular-nums">{(repay || 0).toLocaleString()}</div>
                 </div>
                 <div className="text-xs font-medium text-right text-zinc-450">
                   {loan.status === 'settled' ? (
@@ -288,11 +288,11 @@ export default function LoansTab({
                   <div className="grid grid-cols-2 gap-4 bg-zinc-950/40 p-3 rounded-xl border border-white/5 font-medium">
                     <div className="space-y-1">
                       <span className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Loan Principal</span>
-                      <p className="font-mono text-zinc-200 text-sm">{Number(loan.amount).toLocaleString()} chips</p>
+                      <p className="font-mono text-zinc-200 text-sm">{(Number(loan.amount || 0)).toLocaleString()} chips</p>
                     </div>
                     <div className="space-y-1">
                       <span className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Interest Accrued</span>
-                      <p className="font-mono text-emerald-400 text-sm">+{loan.interest}% (+{(repay - Number(loan.amount)).toLocaleString()})</p>
+                      <p className="font-mono text-emerald-400 text-sm">+{loan.interest || 0}% (+{((repay || 0) - Number(loan.amount || 0)).toLocaleString()})</p>
                     </div>
                   </div>
 
