@@ -111,6 +111,11 @@ export default function App() {
     const declarationsRef = collection(db, 'artifacts', safeAppId, 'public', 'data', 'playerDeclarations');
     const balancesRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'balances', 'main');
 
+    const safetyTimer = setTimeout(() => {
+      setLoading(false);
+      setBalancesLoaded(true);
+    }, 1500);
+
     const unsubConfig = onSnapshot(configRef, snap => {
       if (snap.exists()) {
         setConfig(snap.data());
@@ -126,7 +131,10 @@ export default function App() {
       data.sort((a, b) => Number(b.dayNumber) - Number(a.dayNumber));
       setSessions(data);
       setLoading(false);
-    }, err => console.error('Session fetch error:', err));
+    }, err => {
+      console.error('Session fetch error:', err);
+      setLoading(false);
+    });
 
     const unsubLoans = onSnapshot(loansRef, snap => {
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -166,9 +174,13 @@ export default function App() {
         setBalancesDraft({});
       }
       setBalancesLoaded(true);
-    }, err => console.error('Balances fetch error:', err));
+    }, err => {
+      console.error('Balances fetch error:', err);
+      setBalancesLoaded(true);
+    });
 
     return () => {
+      clearTimeout(safetyTimer);
       unsubConfig();
       unsubSessions();
       unsubLoans();
@@ -799,6 +811,7 @@ export default function App() {
                 playerStats={playerStats}
                 playerDeclarations={playerDeclarations}
                 liveGames={liveGames}
+                isAuthenticated={isAuthenticated}
               />
             )}
 

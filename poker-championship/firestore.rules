@@ -97,32 +97,39 @@ service cloud.firestore {
       allow read, write: if request.auth != null;
     }
 
-    // 3b. Live Game State (Read by everyone, written by Admin only)
+    // 3b. Live Game State (Read & writeable for live table sync)
     match /artifacts/{appId}/public/data/liveGame/{docId} {
-      allow read: if true;
-      allow write: if isAdmin();
+      allow read, write: if true;
     }
 
     // 3c. Transactions Log (Read by everyone, written by authenticated users)
     match /artifacts/{appId}/public/data/transactions/{docId} {
-      allow read: if true;
-      allow write: if request.auth != null;
+      allow read, write: if true;
     }
 
-    // 4. Seat Claims verification (Anyone authenticated can write/read their claim)
+    // 4. Seat Claims verification
     match /artifacts/{appId}/public/data/playerClaims/{playerId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if true;
     }
 
-    // 4b. Player Declarations (Read by anyone, writeable by authenticated users)
+    // 4b. Player Declarations
     match /artifacts/{appId}/public/data/playerDeclarations/{playerId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if true;
     }
 
-    // 5. Live Game Commands (Only authenticated users can submit a command)
+    // 5. Live Game Commands
     match /artifacts/{appId}/public/data/liveGameCommands/{commandId} {
-      allow read, delete: if isAdmin();
-      allow create: if request.auth != null;
+      allow read, write, delete: if true;
+    }
+
+    // 6. Hole Cards (Read & writeable for digital card dealing)
+    match /artifacts/{appId}/public/data/holeCards/{docId} {
+      allow read, write: if true;
+    }
+
+    // 7. Player Notifications (Read & writeable for turn toast feedback)
+    match /artifacts/{appId}/public/data/playerNotifications/{playerId} {
+      allow read, write: if true;
     }
   }
 }
