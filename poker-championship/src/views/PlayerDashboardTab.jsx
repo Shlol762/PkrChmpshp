@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { doc, setDoc, addDoc, collection, updateDoc, getDoc } from 'firebase/firestore';
+import { doc, setDoc, addDoc, collection, updateDoc, getDoc, runTransaction, onSnapshot } from 'firebase/firestore';
 import { db, safeAppId, auth } from '../firebase';
 import { recordRealtimeBuyIn, recordRealtimeRebuy, recordRealtimeCashOut, approveLoanRequest, recordLoanSettlement } from '../utils/ledgerEngine';
 import { 
@@ -23,7 +23,11 @@ import {
   Hourglass
 } from 'lucide-react';
 import { repaymentAmount, CHIP_CASE_CAPACITY, MAX_TRANSACTION_LIMIT } from '../utils/pokerEngine';
-import { isBettingRoundComplete } from '../utils/pokerGameEngine';
+import { isBettingRoundComplete, findNextActivePlayer, startNewHand } from '../utils/pokerGameEngine';
+import { evaluateShowdown } from '../utils/handEvaluator';
+import HoleCards from '../features/virtual-table/components/HoleCards';
+import CommunityCards from '../features/virtual-table/components/CommunityCards';
+import ActionControlPanel from '../features/virtual-table/components/ActionControlPanel';
 
 export default function PlayerDashboardTab({
   currentPlayerId,
@@ -34,8 +38,10 @@ export default function PlayerDashboardTab({
   currentDay,
   playerStats,
   playerDeclarations,
-  liveGames
+  liveGames,
+  isAuthenticated = false,
 }) {
+  const isHost = isAuthenticated || Boolean(auth?.currentUser);
   const [buyInAmount, setBuyInAmount] = useState('');
   const [rebuyAmount, setRebuyAmount] = useState('');
   const [cashOutAmount, setCashOutAmount] = useState('');
@@ -43,6 +49,8 @@ export default function PlayerDashboardTab({
   const [success, setSuccess] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalError, setModalError] = useState(null);
+  const [dashHoleCardsMap, setDashHoleCardsMap] = useState({});
+  const [dashEvalResult, setDashEvalResult] = useState(null);
 
   const getFriendlyErrorMessage = (rawText) => {
     const text = String(rawText || '');
@@ -211,6 +219,13 @@ export default function PlayerDashboardTab({
 
   // Inline Rebuy State
   const [showInlineRebuyModal, setShowInlineRebuyModal] = useState(false);
+
+  // Virtual table join state
+  const [vtBuyInAmount, setVtBuyInAmount] = useState('');
+  const [vtRebuyAmount, setVtRebuyAmount] = useState('');
+  const [vtIsJoining, setVtIsJoining] = useState(false);
+  const [vtIsLeaving, setVtIsLeaving] = useState(false);
+  const [vtIsRebuying, setVtIsRebuying] = useState(false);
 
   // Active game table selection
   const [activeTableId, setActiveTableId] = useState('');
@@ -391,6 +406,22 @@ export default function PlayerDashboardTab({
     return Math.min(theoreticalMin, maxCanRaiseTo);
   }, [liveGame, actingPlayer]);
 
+  // Fetch hole cards at Showdown for live hand evaluation & kicker display
+  useEffect(() => {
+    if (!liveGame || liveGame.stage !== 'SHOWDOWN' || !activeTableId) return;
+    const ref = doc(db, 'artifacts', safeAppId, 'public', 'data', 'holeCards', activeTableId);
+    const unsub = onSnapshot(ref, snap => {
+      if (snap.exists()) setDashHoleCardsMap(snap.data());
+    });
+    return () => unsub();
+  }, [liveGame?.stage, activeTableId]);
+
+  useEffect(() => {
+    if (!liveGame || liveGame.stage !== 'SHOWDOWN' || Object.keys(dashHoleCardsMap).length === 0) return;
+    const res = evaluateShowdown(liveGame.players, dashHoleCardsMap, liveGame.communityCards || []);
+    setDashEvalResult(res);
+  }, [liveGame?.stage, dashHoleCardsMap]);
+
   // Session History for Trend Chart
   const sessionHistory = useMemo(() => {
     if (!currentPlayerId || !player) return [];
@@ -426,7 +457,7 @@ export default function PlayerDashboardTab({
     });
   }, [sessions, currentPlayerId, player]);
 
-  // Submit action command to liveGameCommands collection
+  // Submit action command to liveGameCommands collection & execute atomic update
   const submitPlayerAction = async (tableId, actionType, payload = null) => {
     if (!currentPlayerId) return;
     const pin = localStorage.getItem('poker_player_pin') || '';
@@ -442,12 +473,264 @@ export default function PlayerDashboardTab({
       });
     } catch (err) {
       console.error("Action submission error:", err);
-      alert("Failed to submit action. Please verify your seat PIN.");
     }
   };
 
   const handleActionClick = async (actionType, payload = null) => {
-    await submitPlayerAction(activeTableId, actionType, payload);
+    // Log command for queue tracking
+    submitPlayerAction(activeTableId, actionType, payload);
+
+    if (!liveGame || !liveGame.active) return;
+    if (liveGame.actingPlayerIndex === undefined || liveGame.actingPlayerIndex === -1) return;
+    const actPlayer = liveGame.players[liveGame.actingPlayerIndex];
+    if (!actPlayer) return;
+
+    const isMyTurn = currentPlayerId && actPlayer.id === currentPlayerId;
+    if (!isAuthenticated && !isMyTurn) return;
+
+    try {
+      const targetRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGame', activeTableId);
+      const game = liveGame;
+      if (!game || !game.active || game.actingPlayerIndex === -1) return;
+
+      const updatedPlayers = game.players.map(p => ({ ...p }));
+      const player = updatedPlayers[game.actingPlayerIndex];
+      let nextHighest = Number(game.highestBet || 0);
+      let nextPrevHighest = Number(game.previousHighestBet || 0);
+      let logMsg = '';
+
+      player.hasActed = true;
+      const currentPot = (game.pot || 0) + game.players.reduce((s, p) => s + (p.currentBet || 0), 0);
+
+      if (actionType === 'FOLD') {
+        player.folded = true;
+        logMsg = `${player.name} folded.`;
+      } else if (actionType === 'CHECK') {
+        logMsg = `${player.name} checked.`;
+      } else if (actionType === 'CALL') {
+        const callAmount = nextHighest - (player.currentBet || 0);
+        if (player.stack <= callAmount) {
+          const actualCall = player.stack;
+          player.currentBet = (player.currentBet || 0) + actualCall;
+          player.totalHandInvestment = (player.totalHandInvestment || 0) + actualCall;
+          player.stack = 0;
+          player.isAllIn = true;
+          logMsg = `${player.name} called all-in (${actualCall.toLocaleString()}).`;
+        } else {
+          player.stack -= callAmount;
+          player.currentBet = (player.currentBet || 0) + callAmount;
+          player.totalHandInvestment = (player.totalHandInvestment || 0) + callAmount;
+          logMsg = `${player.name} called (${callAmount.toLocaleString()}).`;
+        }
+      } else if (actionType === 'RAISE') {
+        const targetBet = Number(payload);
+        const addedAmount = targetBet - (player.currentBet || 0);
+        if (player.stack <= addedAmount) {
+          const actualRaise = player.stack;
+          player.currentBet = (player.currentBet || 0) + actualRaise;
+          player.totalHandInvestment = (player.totalHandInvestment || 0) + actualRaise;
+          player.stack = 0;
+          player.isAllIn = true;
+          nextPrevHighest = nextHighest;
+          nextHighest = player.currentBet;
+          logMsg = `${player.name} raised all-in to ${player.currentBet.toLocaleString()}.`;
+        } else {
+          player.stack -= addedAmount;
+          player.currentBet = (player.currentBet || 0) + addedAmount;
+          player.totalHandInvestment = (player.totalHandInvestment || 0) + addedAmount;
+          nextPrevHighest = nextHighest;
+          nextHighest = targetBet;
+          logMsg = `${player.name} raised to ${targetBet.toLocaleString()}.`;
+        }
+        updatedPlayers.forEach((p, idx) => {
+          if (idx !== game.actingPlayerIndex) p.hasActed = false;
+        });
+      }
+
+      const unfoldedPlayers = updatedPlayers.filter(p => !p.folded);
+      if (unfoldedPlayers.length === 1) {
+        const winner = unfoldedPlayers[0];
+        winner.stack += currentPot;
+        const finishMsg = `${winner.name} won the pot of ${currentPot.toLocaleString()} chips (everyone else folded).`;
+        const nextHandState = startNewHand({
+          ...game,
+          players: updatedPlayers,
+          communityCards: [],
+          handDealt: false,
+          history: [...(game.history || []), logMsg, finishMsg],
+        });
+        await setDoc(targetRef, {
+          ...nextHandState,
+          lastUpdated: new Date().toISOString(),
+        }, { merge: true });
+        return;
+      }
+
+      const isRoundComplete = isBettingRoundComplete(updatedPlayers, nextHighest);
+      const nextPlayerIdx = findNextActivePlayer(
+        (game.actingPlayerIndex + 1) % updatedPlayers.length,
+        updatedPlayers
+      );
+
+      await setDoc(targetRef, {
+        ...game,
+        players: updatedPlayers,
+        highestBet: nextHighest,
+        previousHighestBet: nextPrevHighest,
+        actingPlayerIndex: isRoundComplete ? -1 : nextPlayerIdx,
+        history: [...(game.history || []), logMsg],
+        lastUpdated: new Date().toISOString(),
+      }, { merge: true });
+    } catch (err) {
+      console.error('Error executing action:', err);
+    }
+  };
+
+  // ── Virtual Table: Join Table ─────────────────────────────────────────────
+  const handleVtJoin = async () => {
+    if (!currentPlayerId || !activeTableId) return;
+    const amount = Number(vtBuyInAmount);
+    if (isNaN(amount) || amount <= 0) {
+      triggerMessage('error', 'Please enter a valid Buy-In amount to join the table.');
+      return;
+    }
+    setVtIsJoining(true);
+    try {
+      const userId = getAuditUserId();
+      // 1. Record buy-in in ledger (bank -> wallet)
+      await recordRealtimeBuyIn(db, safeAppId, currentPlayerId, amount, currentDay, userId);
+
+      // 2. Seat player at the table
+      const tableRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGame', activeTableId);
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(tableRef);
+        if (!snap.exists()) throw new Error('Table not found.');
+        const game = snap.data();
+        const isHandRunning = !['LOBBY', 'SETUP', 'SHOWDOWN'].includes(game.stage);
+        const playerConfig = config.players.find(p => p.id === currentPlayerId);
+        const name = playerConfig?.name || currentPlayerId;
+        const newPlayer = {
+          id: currentPlayerId,
+          name,
+          stack: amount,
+          currentBet: 0,
+          totalHandInvestment: 0,
+          folded: isHandRunning,
+          isAllIn: false,
+          outOfChips: false,
+          hasActed: isHandRunning,
+          vpip: false,
+          pfr: false,
+        };
+        const updatedPlayers = [...(game.players || []), newPlayer];
+        const updatedDeclarations = {
+          ...(game.processedDeclarations || {}),
+          [currentPlayerId]: { buyIn: amount, rebuys: 0 },
+        };
+        const logMsg = `${name} joined the table with ${amount.toLocaleString()} chips${isHandRunning ? ' (sitting out current hand)' : ''}.`;
+        tx.set(tableRef, {
+          ...game,
+          players: updatedPlayers,
+          processedDeclarations: updatedDeclarations,
+          history: [...(game.history || []), logMsg],
+          lastUpdated: new Date().toISOString(),
+        });
+      });
+      setVtBuyInAmount('');
+      triggerMessage('success', `Joined the table with ${amount.toLocaleString()} chips!`);
+    } catch (err) {
+      triggerMessage('error', `Failed to join table: ${err.message}`);
+    } finally {
+      setVtIsJoining(false);
+    }
+  };
+
+  // ── Virtual Table: Rebuy / Top-Up ─────────────────────────────────────────
+  const handleVtRebuy = async () => {
+    if (!currentPlayerId || !activeTableId || !playerTable) return;
+    const amount = Number(vtRebuyAmount);
+    if (isNaN(amount) || amount <= 0) {
+      triggerMessage('error', 'Please enter a valid Rebuy amount.');
+      return;
+    }
+    setVtIsRebuying(true);
+    try {
+      const userId = getAuditUserId();
+      // 1. Record rebuy in ledger (bank -> wallet)
+      await recordRealtimeRebuy(db, safeAppId, currentPlayerId, amount, currentDay, userId);
+
+      // 2. Add chips to active table seat stack
+      const tableRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGame', activeTableId);
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(tableRef);
+        if (!snap.exists()) throw new Error('Table not found.');
+        const game = snap.data();
+        const updatedPlayers = game.players.map(p => {
+          if (p.id !== currentPlayerId) return p;
+          const newStack = (p.stack || 0) + amount;
+          return { ...p, stack: newStack, outOfChips: newStack <= 0 };
+        });
+        const updatedDeclarations = {
+          ...(game.processedDeclarations || {}),
+          [currentPlayerId]: {
+            ...(game.processedDeclarations?.[currentPlayerId] || {}),
+            rebuys: (game.processedDeclarations?.[currentPlayerId]?.rebuys || 0) + amount,
+          },
+        };
+        const name = game.players.find(p => p.id === currentPlayerId)?.name || currentPlayerId;
+        const logMsg = `${name} rebuyed ${amount.toLocaleString()} chips.`;
+        tx.set(tableRef, {
+          ...game,
+          players: updatedPlayers,
+          processedDeclarations: updatedDeclarations,
+          history: [...(game.history || []), logMsg],
+          lastUpdated: new Date().toISOString(),
+        });
+      });
+      setVtRebuyAmount('');
+      triggerMessage('success', `Rebuyed ${amount.toLocaleString()} chips!`);
+    } catch (err) {
+      triggerMessage('error', `Failed to rebuy: ${err.message}`);
+    } finally {
+      setVtIsRebuying(false);
+    }
+  };
+
+  // ── Virtual Table: Leave Table & Cash Out ─────────────────────────────────
+  const handleVtLeave = async () => {
+    if (!currentPlayerId || !activeTableId || !playerTable) return;
+    const myPlayerInGame = playerTable.players?.find(p => p.id === currentPlayerId);
+    if (!myPlayerInGame) return;
+    const finalChips = (myPlayerInGame.stack || 0) + (myPlayerInGame.currentBet || 0);
+    if (!window.confirm(`Leave table and cash out ${finalChips.toLocaleString()} chips?`)) return;
+    setVtIsLeaving(true);
+    try {
+      const userId = getAuditUserId();
+      // 1. Record cash-out in ledger (wallet -> bank)
+      await recordRealtimeCashOut(db, safeAppId, currentPlayerId, finalChips, currentDay, userId);
+
+      // 2. Remove player from active table seat
+      const tableRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGame', activeTableId);
+      await runTransaction(db, async (tx) => {
+        const snap = await tx.get(tableRef);
+        if (!snap.exists()) return;
+        const game = snap.data();
+        const updatedPlayers = game.players.filter(p => p.id !== currentPlayerId);
+        const name = myPlayerInGame.name || currentPlayerId;
+        const logMsg = `${name} left the table and cashed out ${finalChips.toLocaleString()} chips.`;
+        tx.set(tableRef, {
+          ...game,
+          players: updatedPlayers,
+          history: [...(game.history || []), logMsg],
+          lastUpdated: new Date().toISOString(),
+        });
+      });
+      triggerMessage('success', `Left the table. ${finalChips.toLocaleString()} chips cashed out.`);
+    } catch (err) {
+      triggerMessage('error', `Failed to leave table: ${err.message}`);
+    } finally {
+      setVtIsLeaving(false);
+    }
   };
 
   const handleInlineRebuySubmit = async (amount) => {
@@ -634,6 +917,38 @@ export default function PlayerDashboardTab({
         getAuditUserId(),
         activePlayers
       );
+
+      // Sync table stacks if both lender and borrower are seated at the same active table
+      try {
+        for (const table of activeTables) {
+          const lenderSeated = table.players?.some(p => p.id === loan.lender);
+          const borrowerSeated = table.players?.some(p => p.id === loan.borrower);
+          if (lenderSeated && borrowerSeated) {
+            const tableRef = doc(db, 'artifacts', safeAppId, 'public', 'data', 'liveGame', table.id);
+            await runTransaction(db, async (tx) => {
+              const snap = await tx.get(tableRef);
+              if (!snap.exists()) return;
+              const game = snap.data();
+              const loanAmt = Number(loan.amount);
+              const updatedPlayers = game.players.map(p => {
+                if (p.id === loan.lender) return { ...p, stack: Math.max(0, (p.stack || 0) - loanAmt) };
+                if (p.id === loan.borrower) return { ...p, stack: (p.stack || 0) + loanAmt };
+                return p;
+              });
+              const logMsg = `[Loan] ${loan.lender} loaned ${loanAmt.toLocaleString()} chips to ${loan.borrower} at the table.`;
+              tx.set(tableRef, {
+                ...game,
+                players: updatedPlayers,
+                history: [...(game.history || []), logMsg],
+                lastUpdated: new Date().toISOString(),
+              });
+            });
+            break;
+          }
+        }
+      } catch (syncErr) {
+        console.warn('Loan stack sync skipped:', syncErr.message);
+      }
 
       triggerMessage('success', 'Loan approved and is now active!');
     } catch (err) {
@@ -1559,9 +1874,223 @@ export default function PlayerDashboardTab({
           </div>
         )}
 
+        {/* ── Virtual Table Controls ── */}
+        {currentPlayerId && (() => {
+          const isSeated = playerTable?.players?.some(p => p.id === currentPlayerId);
+          const anyTableActive = activeTables.length > 0;
+
+          if (!anyTableActive) return null;
+
+          if (!isSeated) {
+            return (
+              <div className="bg-zinc-900/40 border border-amber-500/20 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                  <div className="flex items-center gap-2 text-xs font-bold text-amber-400 uppercase tracking-wider">
+                    <Play className="w-4 h-4" />
+                    <span>Join Virtual Table</span>
+                  </div>
+                  <span className="text-xs text-zinc-500 italic">Enter Buy-In amount to get seated</span>
+                </div>
+                <div className="flex gap-3 items-center">
+                  <input
+                    type="number"
+                    value={vtBuyInAmount}
+                    onChange={e => setVtBuyInAmount(e.target.value)}
+                    placeholder="Buy-In amount..."
+                    className="flex-1 bg-zinc-950/60 border border-white/10 rounded-xl px-3 py-2 text-sm text-zinc-200 font-mono focus:outline-none focus:border-amber-500/50"
+                  />
+                  <button
+                    onClick={handleVtJoin}
+                    disabled={vtIsJoining || !vtBuyInAmount}
+                    className="bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold px-4 py-2 rounded-xl text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shadow-[0_0_15px_rgba(245,158,11,0.2)]"
+                  >
+                    {vtIsJoining ? 'Joining...' : 'Join Table'}
+                  </button>
+                </div>
+                <div className="flex gap-2">
+                  {[500, 1000, 2000].map(preset => (
+                    <button
+                      key={preset}
+                      onClick={() => setVtBuyInAmount(String(preset))}
+                      className="flex-1 bg-zinc-950/60 hover:bg-zinc-900 border border-white/5 hover:border-amber-500/20 rounded-lg py-1.5 text-xs font-mono text-zinc-400 hover:text-amber-400 transition-all cursor-pointer"
+                    >
+                      {preset.toLocaleString()}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          }
+
+          // Player is seated
+          const myPlayerInGame = playerTable.players?.find(p => p.id === currentPlayerId);
+          return (
+            <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-4 space-y-3">
+              <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-2">
+                  <Check className="w-3.5 h-3.5" /> Seated at Table
+                </span>
+                <span className="text-xs text-zinc-400 font-mono tabular-nums">
+                  Stack: {((myPlayerInGame?.stack || 0) + (myPlayerInGame?.currentBet || 0)).toLocaleString()} chips
+                </span>
+              </div>
+              {/* Rebuy */}
+              <div className="flex gap-3 items-center">
+                <input
+                  type="number"
+                  value={vtRebuyAmount}
+                  onChange={e => setVtRebuyAmount(e.target.value)}
+                  placeholder="Rebuy amount..."
+                  className="flex-1 bg-zinc-950/60 border border-white/10 rounded-xl px-3 py-2 text-sm text-zinc-200 font-mono focus:outline-none focus:border-amber-500/50"
+                />
+                <button
+                  onClick={handleVtRebuy}
+                  disabled={vtIsRebuying || !vtRebuyAmount}
+                  className="bg-zinc-700 hover:bg-zinc-600 text-white font-bold px-4 py-2 rounded-xl text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {vtIsRebuying ? 'Rebuying...' : 'Rebuy'}
+                </button>
+              </div>
+              {/* Leave */}
+              <button
+                onClick={handleVtLeave}
+                disabled={vtIsLeaving}
+                className="w-full bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 hover:border-red-500/40 text-red-400 font-bold py-2 px-4 rounded-xl text-sm transition-all disabled:opacity-50 cursor-pointer"
+              >
+                {vtIsLeaving ? 'Leaving...' : 'Leave Table & Cash Out'}
+              </button>
+            </div>
+          );
+        })()}
+
         {liveGame && (
           <>
-            {/* Embedded Table Board Stats */}
+            {/* 1. CARDS: Live Hole Cards & Board display directly on player dashboard */}
+            {liveGame.mode === 'full_digital' && currentPlayerId && (
+              <div className="bg-gradient-to-br from-zinc-900 via-zinc-950 to-zinc-900 border border-blue-500/20 rounded-3xl p-6 shadow-2xl relative overflow-hidden space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">🃏</span>
+                    <div>
+                      <h3 className="text-base font-bold text-white tracking-tight">Your Hole Cards</h3>
+                      <p className="text-xs text-zinc-400">
+                        Table: {activeTableId === 'main' ? 'Table 1' : `Table ${activeTableId.split('_')[1] || activeTableId}`} • Hand #{liveGame.handNumber} • {liveGame.stage?.replace('_', ' ')}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {liveGame.players?.find(p => p.id === currentPlayerId)?.folded ? (
+                      <span className="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30 px-3 py-1 rounded-full font-bold flex items-center gap-1.5">
+                        <Eye className="w-3.5 h-3.5" /> Folded (Spectator View Active)
+                      </span>
+                    ) : (actingPlayer && actingPlayer.id === currentPlayerId) ? (
+                      <span className="text-xs bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-3 py-1 rounded-full font-bold animate-pulse">
+                        Your Turn to Act!
+                      </span>
+                    ) : (
+                      <span className="text-xs bg-zinc-800 text-zinc-400 px-3 py-1 rounded-full font-bold">
+                        Active Hand
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-center justify-around gap-6 py-4 bg-zinc-950/60 rounded-2xl border border-white/5 p-4">
+                  <div className="flex flex-col items-center gap-2">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Your Private Cards</span>
+                    <HoleCards
+                      activeTableId={activeTableId}
+                      currentPlayerId={currentPlayerId}
+                      isAuthenticated={false}
+                      isSpectator={false}
+                      isViewerFolded={liveGame.players?.find(p => p.id === currentPlayerId)?.folded === true}
+                      playerId={currentPlayerId}
+                      handNumber={liveGame.handNumber}
+                      size="md"
+                    />
+                  </div>
+
+                  <div className="w-full sm:w-auto border-t sm:border-t-0 sm:border-l border-white/10 pt-4 sm:pt-0 sm:pl-6">
+                    <CommunityCards
+                      communityCards={liveGame.communityCards || []}
+                      remainingDeck={liveGame.remainingDeck || []}
+                      stage={liveGame.stage}
+                      isViewerFolded={liveGame.players?.find(p => p.id === currentPlayerId)?.folded === true}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 2. ACTIONS: Redesigned Action Controls */}
+            {liveGame.stage !== 'SHOWDOWN' ? (() => {
+              const isMyTurn = currentPlayerId && actingPlayer && actingPlayer.id === currentPlayerId;
+              const myPlayerInGame = liveGame.players?.find(p => p.id === currentPlayerId) || null;
+              const displayPlayer = isMyTurn ? actingPlayer : (myPlayerInGame || actingPlayer);
+
+              return (
+                <div className={`bg-zinc-900/40 border rounded-2xl p-2 transition-all duration-300 ${
+                  isMyTurn
+                    ? 'border-amber-500/40 shadow-[0_0_25px_rgba(245,158,11,0.12)] ring-1 ring-amber-500/20'
+                    : 'border-white/5'
+                }`}>
+                  {displayPlayer ? (
+                    <ActionControlPanel
+                      key={displayPlayer.id}
+                      actingPlayer={displayPlayer}
+                      minRaiseTo={minRaiseTo}
+                      totalLivePot={totalLivePot}
+                      handleAction={handleActionClick}
+                      liveGame={liveGame}
+                      isMyTurn={isMyTurn}
+                      isAuthenticated={isHost}
+                      layout="horizontal"
+                    />
+                  ) : (
+                    <div className="text-center py-2 text-zinc-500 italic text-xs">
+                      No active player
+                    </div>
+                  )}
+                </div>
+              );
+            })() : (
+              <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                  <div className="flex items-center gap-2 text-xs font-bold text-amber-400 uppercase tracking-wider">
+                    <Trophy className="w-4 h-4 text-amber-500" />
+                    <span>Showdown — Hand Evaluation &amp; Kickers</span>
+                  </div>
+                  <span className="text-[10px] text-zinc-500 italic font-medium">Waiting for host to confirm pot</span>
+                </div>
+
+                {dashEvalResult && dashEvalResult.evaluations?.length > 0 ? (
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                    {dashEvalResult.evaluations.map(ev => (
+                      <div
+                        key={ev.playerId}
+                        className={`p-2.5 rounded-xl border text-xs flex items-center justify-between gap-2 ${
+                          ev.isWinner
+                            ? 'bg-amber-500/10 border-amber-500/30 text-amber-300 font-bold'
+                            : 'bg-zinc-950/40 border-white/5 text-zinc-400 font-medium'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          {ev.isWinner && <Trophy className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                          <span className="text-white">{ev.name}</span>
+                        </div>
+                        <span className="text-amber-400/90 text-right">{ev.handName}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-2 text-zinc-400 italic text-xs font-medium">
+                    Showdown in progress. Waiting for host to award the pot...
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 3. ROUND STATS: Hand Number, Stage, Current Pot, To Call, Blinds */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
               <div className="bg-zinc-900/40 border border-white/5 rounded-2xl p-4 flex flex-col justify-between">
                 <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5 block">Hand Number</span>
@@ -1585,78 +2114,9 @@ export default function PlayerDashboardTab({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              
-              {/* Turn Actions Panel — always rendered, dimmed when not player's turn */}
-              <div className="lg:col-span-4 space-y-4">
-                {liveGame.stage !== 'SHOWDOWN' ? (() => {
-                  const isMyTurn = currentPlayerId && actingPlayer && actingPlayer.id === currentPlayerId;
-                  // Find the player at the table (may not be seated)
-                  const myPlayerInGame = liveGame.players?.find(p => p.id === currentPlayerId) || null;
-                  const displayPlayer = isMyTurn ? actingPlayer : (myPlayerInGame || actingPlayer);
-
-                  return (
-                    <div className={`bg-zinc-900/40 border rounded-3xl p-5 space-y-4 transition-all duration-300 ${
-                      isMyTurn
-                        ? 'border-amber-500/30 shadow-[0_0_20px_rgba(245,158,11,0.08)]'
-                        : 'border-white/5'
-                    }`}>
-                      <div className="flex items-center justify-between border-b border-white/5 pb-2.5">
-                        <h3 className="text-xs uppercase font-extrabold tracking-widest text-zinc-500">
-                          {isMyTurn ? 'Your Turn to Act' : 'Action Controls'}
-                        </h3>
-                        {!isMyTurn && (
-                          <span className="text-[10px] text-zinc-600 font-semibold italic">
-                            {actingPlayer ? `${actingPlayer.name}'s turn` : isStreetSettled ? 'Street settled' : 'Waiting...'}
-                          </span>
-                        )}
-                        {isMyTurn && (
-                          <span className="w-2 h-2 rounded-full bg-amber-500 animate-ping" />
-                        )}
-                      </div>
-                      {displayPlayer ? (
-                        <div className={`transition-opacity duration-300 ${isMyTurn ? 'opacity-100' : 'opacity-30 pointer-events-none select-none'}`}>
-                          <ActionControlPanel
-                            key={displayPlayer.id}
-                            actingPlayer={displayPlayer}
-                            minRaiseTo={minRaiseTo}
-                            totalLivePot={totalLivePot}
-                            handleAction={handleActionClick}
-                            liveGame={liveGame}
-                          />
-                        </div>
-                      ) : (
-                        <div className="text-center py-4 text-zinc-600 italic text-sm">
-                          No active player
-                        </div>
-                      )}
-                    </div>
-                  );
-                })() : (
-                  <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-5 text-center py-6 text-zinc-500 italic text-sm">
-                    Showdown in progress. Waiting for host to award the pot...
-                  </div>
-                )}
-
-                {/* Account balance quick card */}
-                <div className="bg-zinc-900/40 border border-white/5 rounded-3xl p-5 space-y-3 text-xs">
-                  <div className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider border-b border-white/5 pb-1.5 mb-1 text-center">
-                    Physical Chips (Not Net Worth)
-                  </div>
-                  <div className="flex justify-between items-center text-zinc-400 font-medium">
-                    <span>End of Prev Day:</span>
-                    <span className="font-mono font-bold text-zinc-200">{baselineBalance.toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-zinc-400 font-medium">
-                    <span>Available Bank:</span>
-                    <span className="font-mono font-bold text-emerald-400">{availableBalance.toLocaleString()}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Seats Grid */}
-              <div className="lg:col-span-8 space-y-6">
-                <div className="bg-zinc-950/40 border border-white/5 rounded-3xl p-6 relative min-h-[300px] flex flex-col justify-between">
+            {/* Table Seats Grid */}
+            <div className="space-y-6">
+              <div className="bg-zinc-950/40 border border-white/5 rounded-3xl p-6 relative min-h-[300px] flex flex-col justify-between">
                   <div className="text-xs uppercase font-bold text-zinc-500 tracking-wider mb-4 pb-2 border-b border-white/5 flex justify-between items-center z-10">
                     <span>Table Seats ({liveGame.id === 'main' ? 'Table 1' : `Table ${liveGame.id.split('_')[1] || liveGame.id}`})</span>
                     <span className="font-mono text-zinc-600">Active: {liveGame.players?.filter(p => !p.outOfChips && !p.folded).length}</span>
@@ -1748,8 +2208,6 @@ export default function PlayerDashboardTab({
                   </div>
                 </div>
               </div>
-
-            </div>
           </>
         )}
 
@@ -2249,156 +2707,6 @@ export default function PlayerDashboardTab({
         </div>
       </div>
       {renderErrorModal()}
-    </div>
-  );
-}
-
-function ActionControlPanel({
-  actingPlayer,
-  minRaiseTo,
-  totalLivePot,
-  handleAction,
-  liveGame
-}) {
-  const [raiseValue, setRaiseValue] = useState(minRaiseTo);
-  const [prevMinRaiseTo, setPrevMinRaiseTo] = useState(minRaiseTo);
-
-  if (minRaiseTo !== prevMinRaiseTo) {
-    setPrevMinRaiseTo(minRaiseTo);
-    setRaiseValue(minRaiseTo);
-  }
-
-  const handleAddChip = (amount) => {
-    const current = Number(raiseValue || 0);
-    const maxVal = Number(actingPlayer.stack || 0) + Number(actingPlayer.currentBet || 0);
-    const nextVal = Math.min(current + amount, maxVal);
-    setRaiseValue(nextVal);
-  };
-
-  return (
-    <div className="space-y-4">
-      {/* Current Active Player Info */}
-      <div className="bg-zinc-950/40 p-4 rounded-2xl border border-white/5">
-        <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-wide">Waiting on Player Turn</p>
-        <h4 className="text-base font-bold text-amber-400 mt-1">{actingPlayer.name}</h4>
-        <div className="grid grid-cols-2 gap-2 mt-2 pt-2 border-t border-white/5 text-xs text-zinc-400">
-          <span>Stack: <strong className="font-mono text-zinc-200">{Number(actingPlayer.stack).toLocaleString()}</strong></span>
-          <span>Bet: <strong className="font-mono text-zinc-200">{Number(actingPlayer.currentBet).toLocaleString()}</strong></span>
-        </div>
-      </div>
-
-      {/* Standard Decision Buttons */}
-      <div className="grid grid-cols-3 gap-2">
-        <button
-          onClick={() => handleAction('FOLD')}
-          className="bg-zinc-800 hover:bg-zinc-700 hover:text-white border border-white/5 text-zinc-300 font-bold py-3 px-2 rounded-xl text-xs sm:text-sm transition-all shadow-sm cursor-pointer"
-        >
-          Fold
-        </button>
-        
-        <button
-          onClick={() => handleAction('CHECK')}
-          disabled={Number(actingPlayer.currentBet) < Number(liveGame.highestBet)}
-          className="bg-zinc-800 hover:bg-zinc-700 hover:text-white border border-white/5 text-zinc-300 font-bold py-3 px-2 rounded-xl text-xs sm:text-sm transition-all shadow-sm cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-        >
-          Check
-        </button>
-
-        <button
-          onClick={() => handleAction('CALL')}
-          disabled={Number(actingPlayer.currentBet) >= Number(liveGame.highestBet)}
-          className="bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/20 text-emerald-400 font-bold py-3 px-2 rounded-xl text-xs sm:text-sm transition-all shadow-sm cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed flex flex-col items-center justify-center"
-        >
-          <span className="leading-none">Call</span>
-          {Number(liveGame.highestBet) > Number(actingPlayer.currentBet) && (
-            <span className="text-[9px] font-mono mt-0.5 opacity-80">
-              ({(Number(liveGame.highestBet) - Number(actingPlayer.currentBet)).toLocaleString()})
-            </span>
-          )}
-        </button>
-      </div>
-
-      {/* Raise Slider and Numeric input */}
-      <div className="pt-2 border-t border-white/5 space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-xs text-zinc-400 font-semibold">Raise to:</span>
-          <input
-            type="number"
-            placeholder={`Min: ${minRaiseTo}`}
-            value={raiseValue}
-            onChange={(e) => setRaiseValue(e.target.value === '' ? '' : Number(e.target.value))}
-            className="bg-zinc-950 border border-white/10 rounded-xl py-2 px-3 text-right text-sm text-zinc-200 font-mono font-semibold w-28 focus:outline-none focus:border-amber-500/50"
-          />
-        </div>
-
-        {/* Place Chips */}
-        <div className="flex flex-col gap-1.5">
-          <div className="flex justify-between items-center text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
-            <span>Place Chips:</span>
-            <button
-              type="button"
-              onClick={() => setRaiseValue(minRaiseTo)}
-              className="text-amber-500 hover:text-amber-400 transition-colors uppercase text-[9px] font-extrabold"
-            >
-              Reset to Min
-            </button>
-          </div>
-          <div className="flex items-center justify-between gap-1 bg-zinc-950/40 p-2 rounded-2xl border border-white/5">
-            {[
-              { value: 10, bg: 'bg-[#f4f4f5] text-zinc-950 border-zinc-300' },
-              { value: 50, bg: 'bg-rose-600 text-white border-rose-500' },
-              { value: 100, bg: 'bg-blue-600 text-white border-blue-500' },
-              { value: 500, bg: 'bg-emerald-600 text-white border-emerald-500' },
-              { value: 1000, bg: 'bg-zinc-950 text-amber-400 border-amber-500' }
-            ].map(chip => (
-              <button
-                key={chip.value}
-                type="button"
-                onClick={() => handleAddChip(chip.value)}
-                className={`w-8 h-8 rounded-full border-2 border-dashed font-black text-[9px] flex items-center justify-center shadow-lg active:scale-90 hover:-translate-y-0.5 transition-all cursor-pointer ${chip.bg}`}
-              >
-                {chip.value}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Presets */}
-        <div className="grid grid-cols-4 gap-1.5 text-[9px] font-bold font-mono">
-          <button
-            onClick={() => setRaiseValue(minRaiseTo)}
-            className="bg-zinc-950/60 border border-white/5 hover:bg-zinc-800 py-1.5 rounded-lg text-zinc-450 transition-colors"
-          >
-            MIN
-          </button>
-          <button
-            onClick={() => setRaiseValue(Math.max(minRaiseTo, totalLivePot))}
-            className="bg-zinc-950/60 border border-white/5 hover:bg-zinc-800 py-1.5 rounded-lg text-zinc-450 transition-colors"
-          >
-            POT
-          </button>
-          <button
-            onClick={() => setRaiseValue(Math.max(minRaiseTo, totalLivePot * 2))}
-            className="bg-zinc-950/60 border border-white/5 hover:bg-zinc-800 py-1.5 rounded-lg text-zinc-450 transition-colors"
-          >
-            2xPOT
-          </button>
-          <button
-            onClick={() => setRaiseValue(actingPlayer.stack + actingPlayer.currentBet)}
-            className="bg-rose-950/30 border border-rose-500/10 hover:bg-rose-900/20 py-1.5 rounded-lg text-rose-450 transition-colors"
-          >
-            ALLIN
-          </button>
-        </div>
-
-        <button
-          onClick={() => handleAction('RAISE', raiseValue)}
-          disabled={!raiseValue || Number(raiseValue) < minRaiseTo || Number(raiseValue) > (actingPlayer.stack + actingPlayer.currentBet)}
-          className="w-full bg-amber-500 hover:bg-amber-400 text-amber-950 font-bold py-2.5 rounded-xl text-sm transition-all shadow-md cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
-        >
-          Submit Raise
-        </button>
-      </div>
     </div>
   );
 }
