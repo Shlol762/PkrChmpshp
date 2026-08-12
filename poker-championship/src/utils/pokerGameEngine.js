@@ -1,3 +1,5 @@
+import { buildDeck, shuffleDeck, dealHoleCards } from './cardEngine';
+
 export function findNextActivePlayer(startIndex, players) {
   const N = players.length;
   for (let i = 0; i < N; i++) {
@@ -164,16 +166,65 @@ export function startNewHand(state) {
 
   const historyMsg = `Hand #${state.handNumber + 1} started. ${sbPlayer.name} posted SB (${sbPosted}), ${bbPlayer.name} posted BB (${bbPosted}).`;
 
+  let remainingDeck = [];
+  let handDealt = false;
+  let newHoleCards = null;
+
+  if (state.mode === 'full_digital') {
+    const deck = shuffleDeck(buildDeck());
+    const { assignments, remaining } = dealHoleCards(deck, updatedPlayers);
+    remainingDeck = remaining;
+    handDealt = true;
+    newHoleCards = assignments;
+  }
+
   return {
     ...state,
     handNumber: state.handNumber + 1,
     stage: 'PRE_FLOP',
     dealerIndex: nextDealerIndex,
     players: updatedPlayers,
-    pot: sbPosted + bbPosted,
+    pot: 0,
     highestBet,
     previousHighestBet: 0,
     actingPlayerIndex,
+    communityCards: [],
+    handDealt,
+    remainingDeck,
+    ...(newHoleCards ? { _newHoleCards: newHoleCards } : {}),
     history: [...state.history, historyMsg]
+  };
+}
+
+/**
+ * Safely remove one or more players by ID, correctly recalculating
+ * dealerIndex and actingPlayerIndex relative to the surviving player list.
+ * Safe to call even when removing multiple players in a single pass.
+ */
+export function removePlayers(players, idsToRemove, dealerIndex, actingIndex) {
+  const removeSet = new Set(idsToRemove);
+  const filtered = players.filter(p => !removeSet.has(p.id));
+
+  function recalcIdx(originalPlayers, newPlayers, oldIdx) {
+    if (oldIdx === -1 || oldIdx === undefined || oldIdx === null) return -1;
+    const anchor = originalPlayers[oldIdx];
+    if (!anchor) return newPlayers.length > 0 ? 0 : -1;
+    // If the anchor player survived, find their new position
+    const newIdx = newPlayers.findIndex(p => p.id === anchor.id);
+    if (newIdx !== -1) return newIdx;
+    // Anchor was removed — find next available active player from the same position
+    const startSearch = Math.min(oldIdx, newPlayers.length - 1);
+    for (let i = 0; i < newPlayers.length; i++) {
+      const idx = (startSearch + i) % newPlayers.length;
+      const p = newPlayers[idx];
+      if (!p.folded && !p.isAllIn && !p.outOfChips) return idx;
+    }
+    return newPlayers.length > 0 ? 0 : -1;
+  }
+
+  return {
+    players: filtered,
+    dealerIndex: recalcIdx(players, filtered, dealerIndex),
+    actingPlayerIndex: recalcIdx(players, filtered, actingIndex),
   };
 }
