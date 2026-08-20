@@ -27,14 +27,16 @@ export default function SessionModal({
   // Helper to get previous balance (before the session being edited or created)
   const getPreviousBalance = (playerId) => {
     const prevSession = sessions
-      .filter(s => s.id !== editingSessionId) // Exclude current session being edited
+      .filter(s => s.id !== editingSessionId && s.status !== 'active')
+      .sort((a, b) => Number(b.dayNumber) - Number(a.dayNumber))
       .find(s => Number(s.dayNumber) < Number(sessionDay));
       
     if (prevSession) {
       const val = prevSession.balances?.[playerId];
       return typeof val === 'object' && val !== null ? Number(val.bank || 0) + Number(val.wallet || 0) : Number(val || 0);
     }
-    return Number(config.players.find(p => p.id === playerId)?.startBalance || 0);
+    const p = config.players.find(p => p.id === playerId);
+    return config.currentRound === 2 ? Number(p?.r2StartBalance ?? 8300) : Number(p?.startBalance || 0);
   };
 
   // Initialize draft when modal opens
@@ -43,7 +45,8 @@ export default function SessionModal({
 
     const initialDraft = {};
     const prevSession = sessions
-      .filter(s => s.id !== editingSessionId)
+      .filter(s => s.id !== editingSessionId && s.status !== 'active')
+      .sort((a, b) => Number(b.dayNumber) - Number(a.dayNumber))
       .find(s => Number(s.dayNumber) < Number(sessionDay));
 
     config.players.forEach(p => {

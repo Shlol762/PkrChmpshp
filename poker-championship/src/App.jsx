@@ -387,14 +387,26 @@ export default function App() {
     try {
       const nextDay = activeSession.dayNumber;
       
-      // 1. Compile raw final balances from ledgerDraft using central balances
+      // Find the previous completed session's balances
+      const prevSession = sessions
+        .filter(s => s.status !== 'active' && Number(s.dayNumber) < Number(activeSession.dayNumber))
+        .sort((a, b) => Number(b.dayNumber) - Number(a.dayNumber))[0];
+      const prevBalances = prevSession?.balances || {};
+
+      // 1. Compile raw final balances from ledgerDraft using previous completed session balances
       const rawBalances = {};
       config.players.forEach(p => {
         const draft = ledgerDraft[p.id];
-        const pBal = balances[p.id] || { bank: 0, wallet: 0 };
-        const prevBal = typeof pBal === 'object' ? Number(pBal.bank || 0) + Number(pBal.wallet || 0) : Number(pBal || 0);
+        const prevBalObj = prevBalances[p.id];
+        const roundStartBal = config.currentRound === 2 
+          ? Number(p.r2StartBalance !== undefined ? p.r2StartBalance : 8300) 
+          : Number(p.startBalance || 0);
+        const prevBal = prevBalObj !== undefined && prevBalObj !== null
+          ? (typeof prevBalObj === 'object' ? Number(prevBalObj.bank || 0) + Number(prevBalObj.wallet || 0) : Number(prevBalObj))
+          : roundStartBal;
+
         if (draft && draft.played) {
-          rawBalances[p.id] = prevBal - draft.buyIn - draft.rebuys + draft.cashOut;
+          rawBalances[p.id] = prevBal - Number(draft.buyIn || 0) - Number(draft.rebuys || 0) + Number(draft.cashOut || 0);
         } else {
           rawBalances[p.id] = prevBal;
         }
@@ -402,12 +414,6 @@ export default function App() {
 
       // 2. Calculate paydays
       const paydaysToDistribute = calculatePaydays(Number(nextDay), config, rawBalances, loans);
-      
-      // Find the previous completed session's balances
-      const prevSession = sessions
-        .filter(s => s.status !== 'active' && Number(s.dayNumber) < Number(activeSession.dayNumber))
-        .sort((a, b) => Number(b.dayNumber) - Number(a.dayNumber))[0];
-      const prevBalances = prevSession?.balances || {};
 
       // 3. Atomically commit the session, update balances cache and write transaction logs
       await commitSessionDay(
@@ -508,13 +514,15 @@ export default function App() {
       // 1. Get previous balances for calculation reference
       const getPreviousBalance = (playerId) => {
         const prevSession = sessions
-          .filter(s => s.id !== editingSessionId)
+          .filter(s => s.id !== editingSessionId && s.status !== 'active')
+          .sort((a, b) => Number(b.dayNumber) - Number(a.dayNumber))
           .find(s => Number(s.dayNumber) < Number(dayNumber));
         if (prevSession) {
           const val = prevSession.balances?.[playerId];
           return typeof val === 'object' && val !== null ? Number(val.bank || 0) + Number(val.wallet || 0) : Number(val || 0);
         }
-        return Number(config.players.find(p => p.id === playerId)?.startBalance || 0);
+        const p = config.players.find(p => p.id === playerId);
+        return config.currentRound === 2 ? Number(p?.r2StartBalance ?? 8300) : Number(p?.startBalance || 0);
       };
 
       // 2. Compute rawBalances (poker chip balance before payday distribution)
